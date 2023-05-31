@@ -8,7 +8,7 @@ import numba as nb
 import numpy as np
 
 
-@nb.jit(nopython=True)
+# @nb.jit(nopython=True)
 def rainPeak(totalPrec_monthly,meanT_daily,lgpt5_point):
     """Scan the monthly precipitation for the month with peak rainfall over 3 months
 
