@@ -53,15 +53,18 @@ class ClimateRegime(object):
             wind_speed (3D NumPy): Monthly windspeed at 2m altitude [m/s]
             rel_humidity (3D NumPy): Monthly relative humidity [percentage decimal, 0-1]
         """    
+        daystart=1
+        dayend=min_temp.shape[2]
+        
         rel_humidity[rel_humidity > 0.99] = 0.99
         rel_humidity[rel_humidity < 0.05] = 0.05
         short_rad[short_rad < 0] = 0
         wind_speed[wind_speed < 0] = 0
-        self.meanT_daily = np.zeros((self.im_height, self.im_width, 365))
-        self.totalPrec_daily = np.zeros((self.im_height, self.im_width, 365))
-        self.pet_daily = np.zeros((self.im_height, self.im_width, 365))
-        self.minT_daily = np.zeros((self.im_height, self.im_width, 365))
-        self.maxT_daily = np.zeros((self.im_height, self.im_width, 365))
+        self.meanT_daily = np.zeros((self.im_height, self.im_width, dayend))
+        self.totalPrec_daily = np.zeros((self.im_height, self.im_width, dayend))
+        self.pet_daily = np.zeros((self.im_height, self.im_width, dayend))
+        self.minT_daily = np.zeros((self.im_height, self.im_width, dayend))
+        self.maxT_daily = np.zeros((self.im_height, self.im_width, dayend))
 
 
         # Interpolate monthly to daily data
@@ -76,22 +79,22 @@ class ClimateRegime(object):
                     if self.im_mask[i_row, i_col] == self.nodata_val:
                         continue
 
-                self.meanT_daily[i_row, i_col, :] = obj_utilities.interpMonthlyToDaily(meanT_monthly[i_row, i_col,:], 1, 365)
-                self.totalPrec_daily[i_row, i_col, :] = obj_utilities.interpMonthlyToDaily(precipitation[i_row, i_col,:], 1, 365, no_minus_values=True)
-                self.minT_daily[i_row, i_col, :] = obj_utilities.interpMonthlyToDaily(min_temp[i_row, i_col,:], 1, 365)
-                self.maxT_daily[i_row, i_col, :] = obj_utilities.interpMonthlyToDaily(max_temp[i_row, i_col,:], 1, 365)
-                radiation_daily = obj_utilities.interpMonthlyToDaily(short_rad[i_row, i_col,:], 1, 365, no_minus_values=True)
-                wind_daily = obj_utilities.interpMonthlyToDaily(wind_speed[i_row, i_col,:], 1, 365, no_minus_values=True)
-                rel_humidity_daily = obj_utilities.interpMonthlyToDaily(rel_humidity[i_row, i_col,:], 1, 365, no_minus_values=True)
+                self.meanT_daily[i_row, i_col, :] = obj_utilities.interpMonthlyToDaily(meanT_monthly[i_row, i_col,:], daystart, dayend)
+                self.totalPrec_daily[i_row, i_col, :] = obj_utilities.interpMonthlyToDaily(precipitation[i_row, i_col,:], daystart, dayend, no_minus_values=True)
+                self.minT_daily[i_row, i_col, :] = obj_utilities.interpMonthlyToDaily(min_temp[i_row, i_col,:], daystart, dayend)
+                self.maxT_daily[i_row, i_col, :] = obj_utilities.interpMonthlyToDaily(max_temp[i_row, i_col,:], daystart, dayend)
+                radiation_daily = obj_utilities.interpMonthlyToDaily(short_rad[i_row, i_col,:], daystart, dayend, no_minus_values=True)
+                wind_daily = obj_utilities.interpMonthlyToDaily(wind_speed[i_row, i_col,:], daystart, dayend, no_minus_values=True)
+                rel_humidity_daily = obj_utilities.interpMonthlyToDaily(rel_humidity[i_row, i_col,:], daystart, dayend, no_minus_values=True)
 
                 # calculation of reference evapotranspiration (ETo)
-                obj_eto = ETOCalc.ETOCalc(1, 365, self.latitude[i_row, i_col], self.elevation[i_row, i_col])
+                obj_eto = ETOCalc.ETOCalc(1, dayend, self.latitude[i_row, i_col], self.elevation[i_row, i_col])
                 shortrad_daily_MJm2day = (radiation_daily*3600*24)/1000000 # convert w/m2 to MJ/m2/day
                 obj_eto.setClimateData(self.minT_daily[i_row, i_col, :], self.maxT_daily[i_row, i_col, :], wind_daily, shortrad_daily_MJm2day, rel_humidity_daily)
                 self.pet_daily[i_row, i_col, :] = obj_eto.calculateETO()
                 
         # Sea-level adjusted mean temperature
-        self.meanT_daily_sealevel = self.meanT_daily + np.tile(np.reshape(self.elevation/100*0.55, (self.im_height,self.im_width,1)), (1,1,365))
+        self.meanT_daily_sealevel = self.meanT_daily + np.tile(np.reshape(self.elevation/100*0.55, (self.im_height,self.im_width,1)), (1,1,dayend))
         # P over PET ratio(to eliminate nan in the result, nan is replaced with zero)
         self.P_by_PET_daily = np.nan_to_num(self.totalPrec_daily / self.pet_daily)
 
@@ -106,6 +109,9 @@ class ClimateRegime(object):
             wind_speed (3D NumPy): Daily windspeed at 2m altitude [m/s]
             rel_humidity (3D NumPy): Daily relative humidity [percentage decimal, 0-1]
         """
+        daystart=1
+        dayend=min_temp.shape[2]
+        
         rel_humidity[rel_humidity > 0.99] = 0.99
         rel_humidity[rel_humidity < 0.05] = 0.05
         short_rad[short_rad<0]=0
@@ -113,9 +119,9 @@ class ClimateRegime(object):
         wind_speed[wind_speed<0]=0
         
         
-        self.meanT_daily = np.zeros((self.im_height, self.im_width, 365))
-        self.totalPrec_daily = np.zeros((self.im_height, self.im_width, 365))
-        self.pet_daily = np.zeros((self.im_height, self.im_width, 365))
+        self.meanT_daily = np.zeros((self.im_height, self.im_width, dayend))
+        self.totalPrec_daily = np.zeros((self.im_height, self.im_width, dayend))
+        self.pet_daily = np.zeros((self.im_height, self.im_width, dayend))
         self.maxT_daily = max_temp
         
 
@@ -130,13 +136,13 @@ class ClimateRegime(object):
                 self.totalPrec_daily[i_row, i_col, :] = precipitation[i_row, i_col, :]
                 
                 # calculation of reference evapotranspiration (ETo)
-                obj_eto = ETOCalc.ETOCalc(1, 365, self.latitude[i_row, i_col], self.elevation[i_row, i_col])
+                obj_eto = ETOCalc.ETOCalc(1, dayend, self.latitude[i_row, i_col], self.elevation[i_row, i_col])
                 shortrad_daily_MJm2day = (short_rad[i_row, i_col, :]*3600*24)/1000000 # convert w/m2 to MJ/m2/day
                 obj_eto.setClimateData(min_temp[i_row, i_col, :], max_temp[i_row, i_col, :], wind_speed[i_row, i_col, :], shortrad_daily_MJm2day, rel_humidity[i_row, i_col, :])
                 self.pet_daily[i_row, i_col, :] = obj_eto.calculateETO()
                 
         # sea level temperature
-        self.meanT_daily_sealevel = self.meanT_daily + np.tile(np.reshape(self.elevation/100*0.55, (self.im_height,self.im_width,1)), (1,1,365))
+        self.meanT_daily_sealevel = self.meanT_daily + np.tile(np.reshape(self.elevation/100*0.55, (self.im_height,self.im_width,1)), (1,1,dayend))
         # P over PET ratio (to eliminate nan in the result, nan is replaced with zero)
         self.P_by_PET_daily = np.nan_to_num(self.totalPrec_daily / self.pet_daily)
 
@@ -287,10 +293,13 @@ class ClimateRegime(object):
             2D numpy: The accumulated number of days with daily mean 
                       temperature is above 0 degree Celcius
         """        
-        # Adding interpolation to the dataset
-        interp_daily_temp = np.zeros((self.im_height, self.im_width, 365))
+        daystart=1
+        dayend=self.meanT_daily.shape[2]
         
-        days = np.arange(1,366)
+        # Adding interpolation to the dataset
+        interp_daily_temp = np.zeros((self.im_height, self.im_width, dayend))
+        
+        days = np.arange(daystart,dayend+1)
         for i_row in range(self.im_height):
             for i_col in range(self.im_width):
                 temp_1D = self.meanT_daily[i_row, i_col, :]
@@ -313,10 +322,13 @@ class ClimateRegime(object):
         Returns:
             2D numpy: The accumulated number of days with daily mean 
                       temperature is above 5 degree Celcius
-        """          
+        """   
+        daystart=1
+        dayend=self.meanT_daily.shape[2]        
+        
         # Adding interpolation to the dataset
-        interp_daily_temp = np.zeros((self.im_height, self.im_width, 365))
-        days = np.arange(1,366)
+        interp_daily_temp = np.zeros((self.im_height, self.im_width, dayend))
+        days = np.arange(daystart,dayend+1)
         for i_row in range(self.im_height):
             for i_col in range(self.im_width):
                 temp_1D = self.meanT_daily[i_row, i_col, :]
@@ -339,9 +351,12 @@ class ClimateRegime(object):
             2D numpy: The accumulated number of days with daily mean
                       temperature is above 10 degree Celcius
         """
+        daystart=1
+        dayend=self.meanT_daily.shape[2]        
+        
         # Adding interpolation to the dataset
-        interp_daily_temp = np.zeros((self.im_height, self.im_width, 365))
-        days = np.arange(1,366)
+        interp_daily_temp = np.zeros((self.im_height, self.im_width, dayend))
+        days = np.arange(daystart,dayend+1)
         for i_row in range(self.im_height):
             for i_col in range(self.im_width):
                 temp_1D = self.meanT_daily[i_row, i_col, :]
@@ -411,9 +426,12 @@ class ClimateRegime(object):
         Returns:
             2D NumPy: 18 2D arrays [A1-A9, B1-B9] correspond to each Temperature Profile class [days]
         """        
+        daystart=1
+        dayend=self.meanT_daily.shape[2]
+        
         # Smoothening the temperature curve
-        interp_daily_temp = np.zeros((self.im_height, self.im_width, 365))
-        days = np.arange(1,366)
+        interp_daily_temp = np.zeros((self.im_height, self.im_width, dayend))
+        days = np.arange(daystart,dayend+1)
         for i_row in range(self.im_height):
             for i_col in range(self.im_width):
                 temp_1D = self.meanT_daily[i_row, i_col, :]
@@ -480,6 +498,8 @@ class ClimateRegime(object):
            2D NumPy: Length of Growing Period
         """        
         #============================
+        daystart=1
+        dayend=self.meanT_daily.shape[2]        
         kc_list = np.array([0.0, 0.1, 0.2, 0.5, 1.0, 0.5, 0.2])
         #============================
         Txsnm = 0.  # Txsnm - snow melt temperature threshold
@@ -512,7 +532,7 @@ class ClimateRegime(object):
                     if self.im_mask[i_row, i_col] == self.nodata_val:
                         continue
 
-                for doy in range(0, 365):
+                for doy in range(daystart-1,dayend):
                     p = LGPCalc.psh(
                         0., self.Eto365[i_row, i_col, doy])
                     fromT0 = LGPCalc.isfromt0(meanT_daily_new, doy)
@@ -554,8 +574,8 @@ class ClimateRegime(object):
 
         lgp_class = np.zeros(lgp.shape)
 
-        lgp_class[lgp>=365] = 7 # Per-humid
-        lgp_class[np.logical_and(lgp>=270, lgp<365)] = 6 # Humid
+        lgp_class[lgp>=dayend] = 7 # Per-humid
+        lgp_class[np.logical_and(lgp>=270, lgp<dayend)] = 6 # Humid
         lgp_class[np.logical_and(lgp>=180, lgp<270)] = 5 # Sub-humid
         lgp_class[np.logical_and(lgp>=120, lgp<180)] = 4 # Moist semi-arid
         lgp_class[np.logical_and(lgp>=60, lgp<120)] = 3 # Dry semi-arid
@@ -621,6 +641,8 @@ class ClimateRegime(object):
         for irrigated condition.
 
         """
+        daystart=1
+        dayend=self.meanT_daily.shape[2]
         
         # Definition of multi-cropping classes (Reference: GAEZ v4 Model Documentation)
         # 1 => A Zone (Zone of no cropping, too cold or too dry for rainfed crops)
@@ -649,7 +671,7 @@ class ClimateRegime(object):
                         continue
                     
                 temp_1D = self.meanT_daily[i_r, i_c, :]
-                days = np.arange(0,365)
+                days = np.arange(daystart-1,dayend)
                 
                 deg = 5 # order of polynomical fit
                 
@@ -668,7 +690,7 @@ class ClimateRegime(object):
                     end_veg = veg_period[-1]
                 except:
                     start_veg = 0
-                    end_veg = 364
+                    end_veg = dayend-1
                 
                 # Slicing the temperature within the vegetative period
                 interp_meanT_veg_T5 = interp_daily_temp[start_veg:end_veg]

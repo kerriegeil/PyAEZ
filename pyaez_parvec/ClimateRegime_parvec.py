@@ -59,7 +59,7 @@ class ClimateRegime(object):
         # y=min_temp.y.data
         # x=min_temp.x.data
         daystart=1
-        dayend=365
+        dayend=min_temp.shape[2]
         # t=np.arange(daystart,dayend+1)
         # init_val=0
 
@@ -143,7 +143,7 @@ class ClimateRegime(object):
         # y=min_temp.y.data
         # x=min_temp.x.data
         daystart=1
-        dayend=365
+        dayend=min_temp.shape[2]
         # t=np.arange(daystart,dayend+1)
         # init_val=0
 
@@ -175,7 +175,7 @@ class ClimateRegime(object):
         # smoothed mean T
         # Adding interpolation to the dataset
         # 5th degree spline fit to smooth in time
-        days = np.arange(1,366) # x values
+        days = np.arange(1,dayend+1) # x values
         # replace any nan with zero
         mask3D = np.tile(self.im_mask[:,:,np.newaxis], (1,1,days.shape[0]))
         data=np.where(mask3D==0,0,self.meanT_daily)

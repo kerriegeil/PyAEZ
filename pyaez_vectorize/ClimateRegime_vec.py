@@ -59,7 +59,7 @@ class ClimateRegime(object):
         # y=min_temp.y.data
         # x=min_temp.x.data
         daystart=1
-        dayend=365
+        dayend=min_temp.shape[2]
         # t=np.arange(daystart,dayend+1)
         # init_val=0
 
@@ -140,12 +140,8 @@ class ClimateRegime(object):
             wind_speed (3D NumPy): Daily windspeed at 2m altitude [m/s]
             rel_humidity (3D NumPy): Daily relative humidity [percentage decimal, 0-1]
         """
-        # y=min_temp.y.data
-        # x=min_temp.x.data
         daystart=1
-        dayend=365
-        # t=np.arange(daystart,dayend+1)
-        # init_val=0
+        dayend=min_temp.shape[2]
 
         # implement range limitations/corrections on input data values 
         rel_humidity[rel_humidity > 0.99] = 0.99
@@ -153,39 +149,65 @@ class ClimateRegime(object):
         short_rad[short_rad < 0] = 0
         wind_speed[wind_speed < 0] = 0
         
-        # # Interpolate monthly to daily data
-        # obj_utilities = UtilitiesCalc.UtilitiesCalc()
-
+        
         self.meanT_daily = (min_temp+max_temp)/2.
         self.totalPrec_daily = precipitation
         self.maxT_daily = max_temp
 
-        # calculation of reference evapotranspiration (ETo)
-        obj_eto = ETOCalc.ETOCalc(daystart, dayend, self.latitude, self.elevation)
-        shortrad_daily_MJm2day = (short_rad*3600.*24.)/1000000. # convert w/m2 to MJ/m2/day
-        obj_eto.setClimateData(min_temp, max_temp, wind_speed, shortrad_daily_MJm2day, rel_humidity)
-        self.pet_daily= obj_eto.calculateETO() 
+        print('assigning fake1')
+        self.fake1_3D = short_rad
+        print('assigning fake2')
+        self.fake2_3D = short_rad
+        print('assigning fake3')
+        self.fake3_3D = short_rad
+        print('assigning fake4')
+        self.fake4_3D = short_rad
+        print('assigning fake5')
+        self.fake5_3D = short_rad
+        print('assigning fake6')
+        self.fake6_3D = short_rad
+        print('assigning fake7')
+        self.fake7_3D = short_rad
+        print('assigning fake8')
+        self.fake8_3D = short_rad
+        print('assigning fake9')
+        self.fake9_3D = short_rad
+        print('assigning fake10')
+        self.fake10_3D = short_rad
+        print('assigning fake11')
+        self.fake11_3D = short_rad
+        print('assigning fake12')
+        self.fake12_3D = short_rad
 
-        # sea level temperature
-        self.meanT_daily_sealevel = self.meanT_daily + np.expand_dims(self.elevation/100*0.55,axis=2) # automatic broadcasting         
         
-        # P over PET ratio (to eliminate nan in the result, nan is replaced with zero)
-        self.P_by_PET_daily = np.nan_to_num(self.totalPrec_daily / self.pet_daily)
+#         # calculation of reference evapotranspiration (ETo)
+#         obj_eto = ETOCalc.ETOCalc(daystart, dayend, self.latitude, self.elevation)
+#         shortrad_daily_MJm2day = (short_rad*3600.*24.)/1000000. # convert w/m2 to MJ/m2/day
+#         obj_eto.setClimateData(min_temp, max_temp, wind_speed, shortrad_daily_MJm2day, rel_humidity)
+#         self.pet_daily= obj_eto.calculateETO() 
+#         del rel_humidity,short_rad,wind_speed,shortrad_daily_MJm2day
 
-        # smoothed mean T
-        # Adding interpolation to the dataset
-        # 5th degree spline fit to smooth in time
-        days = np.arange(1,366) # x values
-        # replace any nan with zero
-        mask3D = np.tile(self.im_mask[:,:,np.newaxis], (1,1,days.shape[0]))
-        data=np.where(mask3D==0,0,self.meanT_daily)
-        data2D=data.transpose(2,0,1).reshape(days.shape[0],-1) # every column is a set of y values
-        # do the fitting
-        quad_spl=np.polynomial.polynomial.polyfit(days,data2D,deg=5)
-        interp_daily_temp=np.polynomial.polynomial.polyval(days,quad_spl)
-        #reshape
-        interp_daily_temp=interp_daily_temp.reshape(mask3D.shape[0],mask3D.shape[1],-1)
-        self.interp_daily_temp=interp_daily_temp        
+#         # sea level temperature
+#         self.meanT_daily_sealevel = self.meanT_daily + np.expand_dims(self.elevation/100*0.55,axis=2) # automatic broadcasting         
+        
+#         # P over PET ratio (to eliminate nan in the result, nan is replaced with zero)
+#         self.P_by_PET_daily = np.nan_to_num(self.totalPrec_daily / self.pet_daily)
+
+#         # smoothed mean T
+#         # Adding interpolation to the dataset
+#         # 5th degree spline fit to smooth in time
+#         days = np.arange(daystart,dayend+1) # x values
+#         # replace any nan with zero
+#         mask3D = np.tile(self.im_mask[:,:,np.newaxis], (1,1,days.shape[0]))
+#         data=np.where(mask3D==0,0,self.meanT_daily)
+#         data2D=data.transpose(2,0,1).reshape(days.shape[0],-1) # every column is a set of y values
+#         del data
+#         # do the fitting
+#         quad_spl=np.polynomial.polynomial.polyfit(days,data2D,deg=5)
+#         interp_daily_temp=np.polynomial.polynomial.polyval(days,quad_spl)
+#         #reshape
+#         interp_daily_temp=interp_daily_temp.reshape(mask3D.shape[0],mask3D.shape[1],-1)
+#         self.interp_daily_temp=interp_daily_temp        
 
 
     def getThermalClimate(self):
@@ -531,6 +553,8 @@ class ClimateRegime(object):
            2D NumPy: Length of Growing Period
         """  
         #============================
+        daystart=1
+        dayend=self.maxT_daily.shape[2]
         kc_list = np.array([0.0, 0.1, 0.2, 0.5, 1.0])
         #============================
         Txsnm = 0.  # Txsnm - snow melt temperature threshold
@@ -558,7 +582,7 @@ class ClimateRegime(object):
             totalPrec_monthly, Ta365, lgpt5)
         p = LGPCalc.psh(np.zeros(self.Eto365.shape), self.Eto365)            
 
-        for doy in range(0, 365):
+        for doy in range(daystart-1, dayend):
             Eta_new, Etm_new, Wb_new, Wx_new, Sb_new, kc_new = LGPCalc.EtaCalc(
                                     self.im_mask,
                                     np.float64(Tx365[:,:,doy]), 
@@ -600,7 +624,7 @@ class ClimateRegime(object):
         yy = LGPCalc.val10day(Etm365X)
     
         with np.errstate(divide='ignore', invalid='ignore'):
-            lgp_whole = xx[:,:,:365]/yy[:,:,:365]
+            lgp_whole = xx[:,:,:dayend]/yy[:,:,:dayend]
 
         lgp_tot=np.where((islgp==1)&(lgp_whole>=0.4),1,0).sum(axis=2)
         lgp_tot=np.where(self.im_mask==1,lgp_tot,np.nan)    
@@ -623,8 +647,8 @@ class ClimateRegime(object):
 
         lgp_class = np.zeros(lgp.shape)
 
-        lgp_class[lgp>=365] = 7 # Per-humid
-        lgp_class[np.logical_and(lgp>=270, lgp<365)] = 6 # Humid
+        lgp_class[lgp>=dayend] = 7 # Per-humid
+        lgp_class[np.logical_and(lgp>=270, lgp<dayend)] = 6 # Humid
         lgp_class[np.logical_and(lgp>=180, lgp<270)] = 5 # Sub-humid
         lgp_class[np.logical_and(lgp>=120, lgp<180)] = 4 # Moist semi-arid
         lgp_class[np.logical_and(lgp>=60, lgp<120)] = 3 # Dry semi-arid
@@ -647,7 +671,7 @@ class ClimateRegime(object):
         # moisture_index = np.mean(self.totalPrec_daily/self.pet_daily, axis = 2)
 
         lgp_equv = 14.0 + 293.66*moisture_index - 61.25*moisture_index*moisture_index
-        lgp_equv[ moisture_index > 2.4 ] = 366
+        lgp_equv[ moisture_index > 2.4 ] = dayend
 
         if self.set_mask:
             return np.ma.masked_where(self.im_mask == 0, lgp_equv)

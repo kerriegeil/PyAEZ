@@ -34,13 +34,14 @@ def rainPeak(totalPrec_monthly,meanT_daily,lgpt5):
     #============================================
 
     # get index of first occurrence in time where true at each grid cell
+    ndays=meanT_daily.shape[2]
     day1=np.argmax(meanT_daily>=5.0,axis=2) 
     # argmax returns 0 where there is no first occurrence (no growing season) so need to fix
     day1=np.where(lgpt5==0,np.nan,day1)
 
-    istart0=np.where((lgpt5<365),day1,0.) # replaces if block
-    dat1=np.where(istart0>365,istart0-365,istart0)  # replaces setdat function
-    istart1=np.where((lgpt5<365),dat1+lgpt5-1,lgpt5-1) # replaces if block
+    istart0=np.where((lgpt5<ndays),day1,0.) # replaces if block
+    dat1=np.where(istart0>ndays,istart0-ndays,istart0)  # replaces setdat function
+    istart1=np.where((lgpt5<ndays),dat1+lgpt5-1,lgpt5-1) # replaces if block
 
     return meanT_daily, istart0,istart1
 #============================================

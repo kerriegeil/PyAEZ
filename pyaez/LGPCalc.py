@@ -35,8 +35,10 @@ def rainPeak(totalPrec_monthly,meanT_daily,lgpt5_point):
     rainmax[11] = totalPrec_monthly[10]+totalPrec_monthly[11]+totalPrec_monthly[0]
     mon_rainmax=mon[rainmax==rainmax.max()][0]
     #============================================
-
-    days = np.arange(0,365)
+    daystart=1
+    dayend=self.meanT_daily.shape[2]
+        
+    days = np.arange(daystart-1,dayend)
     deg = 5
     mat = np.zeros((days.shape[0], deg + 1))
     mat[:, 0] = np.ones_like(days)
@@ -45,14 +47,14 @@ def rainPeak(totalPrec_monthly,meanT_daily,lgpt5_point):
     y = meanT_daily
     pinv = np.linalg.pinv(mat)
     p = (pinv*y).sum(axis=-1)
-    days_f = np.arange(0., 365.)
+    days_f = np.arange(np.float(daystart-1),np.float(dayend-1))
     meanT_daily_new = np.zeros_like(days_f)
     for coeff in p[::-1]:
         meanT_daily_new = days_f * meanT_daily_new + coeff
     lgpt5_veg = days_f[meanT_daily_new >= 5.0]
     
     #============================================
-    if lgpt5_point < 365.:
+    if lgpt5_point < dayend:
         istart0 = lgpt5_veg[0]
         istart1 = istart0 + lgpt5_point-1
     else:
@@ -159,7 +161,8 @@ def psh(ng,et0):
 @nb.jit(nopython=True)
 def EtaCalc(Tx365, Ta365, Pcp365, Txsnm, Fsnm, Eto365, wb_old,sb_old,doy,fromT0,istart0,istart1,Sa,D,p,kc_list,lgpt5_point):
     """Calculate actual evapotranspiration (ETa)
-    """    
+    """  
+    
     # Period with Tmax <= Txsnm (precipitaton falls as snow as is added to snow bucket)
     if lgpt5_point<365. and Tx365 < 0. and Ta365 <=0.:
         kc = kc_list[0]

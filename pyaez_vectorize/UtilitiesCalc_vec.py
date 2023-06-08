@@ -181,8 +181,9 @@ class UtilitiesCalc(object):
         elif 'nc' in ref_raster_path[-3:]:
             # get spatial ref from netcdf
             spatial_ref=xr.open_dataset(ref_raster_path)['spatial_ref']
+            vname=ref_raster_path.split('/')[-1].split('_')[0]
             try:
-                mask=xr.open_dataset(ref_raster_path)['mask'].data
+                mask=xr.open_dataset(ref_raster_path)[vname].data
             except:
                 print('no variable named mask found in netcdf file. rewrite netcdf with variable named mask or use a tif mask')
         else:

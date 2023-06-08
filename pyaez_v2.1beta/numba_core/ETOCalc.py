@@ -4,7 +4,7 @@ Written by Thaileng Thol
 """
 
 import numpy as np
-import xarray as xr
+import numba as nb
 
 class ETOCalc(object):
 
@@ -22,52 +22,48 @@ class ETOCalc(object):
         self.shortRad_daily = short_rad # MJ/m2.day
         self.rel_humidity = rel_humidity # Fraction
 
-    def calculateETO(self):
-
+    @staticmethod
+    @nb.jit(nopython=True)
+    def calculateETONumba(cycle_begin, cycle_end, latitude, alt,  minT_daily, maxT_daily, windspeed_daily, shortRad_daily, rel_humidity):
         # Monthly Average Temperature
-        ta = (self.minT_daily + self.maxT_daily)/2
+        ta = (minT_daily + maxT_daily)/2
 
          # Saturation Vapor Pressure
-        es_tmin = 0.6108 * np.exp((17.27 * self.minT_daily) / (self.minT_daily + 237.3))
-        es_tmax = 0.6108 * np.exp((17.27 * self.maxT_daily) / (self.maxT_daily + 237.3))
+        es_tmin = 0.6108 * np.exp((17.27 * minT_daily) / (minT_daily + 237.3))
+        es_tmax = 0.6108 * np.exp((17.27 * maxT_daily) / (maxT_daily + 237.3))
         es = (es_tmin + es_tmax) / 2.0
 
         # Actual Vapor Pressure
-        ea = self.rel_humidity * es
+        ea = rel_humidity * es
         # when relative humidity data is not available, we can use following approximation based min temperature
-        #ea = 0.611 * np.exp((17.27 * self.minT_daily)/(self.minT_daily + 237.3))
-
-        # Julien Days
-        doy = np.arange(self.cycle_begin, self.cycle_end+1)
-        sd = 0.4093 * np.sin((2*np.pi*doy/365)-1.39)
-        sd = np.tile(sd[np.newaxis, np.newaxis,:], (ta.shape[0],ta.shape[1],1))
+        #ea = 0.611 * np.exp((17.27 * minT_daily)/(minT_daily + 237.3))
 
         # Latitude in Radian
-        # expand the latitude array from size (y,x) to size (y,x,t) to avoid future broadcasting issues
-        lat_rad = self.latitude * np.pi/180
-        lat_rad = np.tile(lat_rad[:,:,np.newaxis],(1,1,self.cycle_end))
+        lat_rad = latitude * np.pi/180
+
+        # Julien Days
+        doy = np.arange(cycle_begin, cycle_end+1)
+        sd = 0.4093 * np.sin((2*np.pi*doy/365)-1.39)
 
         # Sunset Hour angle
         sha = np.arccos(-np.tan(lat_rad)*np.tan(sd))
 
         # Relative distance Earth to Sun
         dr = 1 + 0.033*np.cos(2*np.pi*doy/365)
-        dr=np.tile(dr[np.newaxis, np.newaxis,:], (ta.shape[0],ta.shape[1],1))
 
         # Extraterrestrial radiation (top of atmosphere radiation)
         Ra = 0.082*(24*60/np.pi)*dr*((sha*np.sin(lat_rad)*np.sin(sd))+(np.cos(lat_rad)*np.cos(sd)*np.sin(sha)))
 
         # Clear-sky solar radiation
-        alt=np.tile(self.alt[:,:,np.newaxis],(1,1,self.cycle_end))
         Rso= Ra*(0.75+(0.00002*alt))
 
         # Net incoming Short-wave radiation
         alpha = 0.23
-        Rns = self.shortRad_daily * (1-alpha)
+        Rns = shortRad_daily * (1-alpha)
 
         # Net outgoing long wave-radiation
         sub_cst = 0.000000004903  # Stefan-Boltzmann constant [MJ K-4 m-2 day-1]
-        Rnl = (((273.16+self.maxT_daily)**4)+((273.16 +self.minT_daily)**4))*(0.34 - (0.14*(ea**0.5)))*((1.35*(self.shortRad_daily/Rso))-0.35)*sub_cst/2
+        Rnl = (((273.16+maxT_daily)**4)+((273.16 +minT_daily)**4))*(0.34 - (0.14*(ea**0.5)))*((1.35*(shortRad_daily/Rso))-0.35)*sub_cst/2
 
         # Net Radiation flux at crop surface
         Rn = Rns - Rnl
@@ -81,18 +77,21 @@ class ETOCalc(object):
         # Psychrometric Constant
         psy = 0.000665*P
 
-        # this computation as it exists in pyaez is probably not correct, since 
-        # at most indices this comp does a day's T minus the T of two days prior
         # Soil Heat Flux - G
-        ta_diff=np.diff(ta,n=1,axis=2,prepend=ta[:,:,-1:])
-        G = 0.14 * ta_diff
+        ta_dublicate_last2 = np.append(ta, np.array([ta[-1], ta[-1]]))
+        ta_dublicate_first2 = np.append(np.array([ta[0], ta[0]]), ta)
+        G = 0.14 * (ta_dublicate_last2 - ta_dublicate_first2)
+        G = G[0:G.size-2]
 
         # ETo Penman Monteith
         ETo_a = 0.408*D*(Rn-G)
-        ETo_b = psy*900*self.windspeed_daily*(es-ea)/(ta+273)
-        ETo_c = D + (psy*(1+0.34*self.windspeed_daily))
+        ETo_b = psy*900*windspeed_daily*(es-ea)/(ta+273)
+        ETo_c = D + (psy*(1+0.34*windspeed_daily))
         ETo = (ETo_a + ETo_b)/ETo_c
 
         ETo[ETo < 0]= 0
 
         return ETo
+
+    def calculateETO(self):
+        return ETOCalc.calculateETONumba(self.cycle_begin, self.cycle_end, self.latitude, self.alt,  self.minT_daily, self.maxT_daily, self.windspeed_daily, self.shortRad_daily, self.rel_humidity)
