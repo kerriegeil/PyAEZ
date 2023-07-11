@@ -25,13 +25,13 @@ from collections import OrderedDict as odict
 # HPC Orion
 #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 # change this to your PyAEZ directory
-work_dir = '/work/hpc/users/kerrie/UN_FAO/repos/PyAEZ/'
-# #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-# # these are the same for everyone
-data_dir = '/work/hpc/datasets/un_fao/pyaez/china_8110/daily/npy/' # subset for no antarctica, 1800 lats
-maskfile = '/work/hpc/datasets/un_fao/pyaez/china_static/netcdf/mask.nc'# subset for no antarctica, 1800 lats
-elevfile = '/work/hpc/datasets/un_fao/pyaez/china_static/tif/elev.tif'
-out_path = work_dir+'time_scripts/results/' # path for saving output data
+# work_dir = '/work/hpc/users/kerrie/UN_FAO/repos/PyAEZ/'
+# # #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+# # # these are the same for everyone
+# data_dir = '/work/hpc/datasets/un_fao/pyaez/china_8110/daily/npy/' # subset for no antarctica, 1800 lats
+# maskfile = '/work/hpc/datasets/un_fao/pyaez/china_static/netcdf/mask.nc'# subset for no antarctica, 1800 lats
+# elevfile = '/work/hpc/datasets/un_fao/pyaez/china_static/tif/elev.tif'
+# out_path = work_dir+'time_scripts/results/' # path for saving output data
 
 # Kerrie laptop
 # work_dir = 'C://Users/kerrie/Documents/01_LocalCode/repos/PyAEZ/' # path to your PyAEZ repo
@@ -40,21 +40,30 @@ out_path = work_dir+'time_scripts/results/' # path for saving output data
 # elevfile = 'C://Users/kerrie/Documents/02_LocalData/pyAEZ_input_data/china/elev.nc'
 # out_path = work_dir+'time_scripts/results/' # path for saving output data
 
+# Kerrie desktop
+work_dir = 'K:/projects/unfao/pyaez_gaez/repos/PyAEZ_kerrie/PyAEZ/' # path to your PyAEZ repo
+data_dir = 'C://Users/kerrie.WIN/Documents/data/pyAEZ_data_inputs_china_03272023/' # path to your data
+maskfile = 'C://Users/kerrie.WIN/Documents/data/pyAEZ_data_inputs_china_03272023/mask.tif'# subset for no antarctica, 1800 lats
+elevfile = 'C://Users/kerrie.WIN/Documents/data/pyAEZ_data_inputs_china_03272023/elev.nc'
+out_path = work_dir+'time_scripts/results/' # path for saving output data
+
 # Create output dir if it does not exist
 isExist = os.path.exists(out_path)
 if not isExist:
    os.makedirs(out_path)
 
 sys.path.append(work_dir+'pyaez_v2.1_2023JUL10/') # add pyaez model to system path
-import ClimateRegime as ClimateRegime
+import ClimateRegime_v2_1 as ClimateRegime
 clim_reg = ClimateRegime.ClimateRegime()
-import UtilitiesCalc as UtilitiesCalc
+import UtilitiesCalc_v2_1 as UtilitiesCalc
 obj_utilities=UtilitiesCalc.UtilitiesCalc()
 
 # Define the Area-Of-Interest's geographical extents
-lats=rio.open_rasterio(maskfile)['y'].data
-lat_min = np.trunc(lats.min()*100000)/100000 # use only 5 decimal places
-lat_max = np.trunc(lats.max()*100000)/100000 # use only 5 decimal places
+# lats=rio.open_rasterio(maskfile)['y'].data
+# lat_min = np.trunc(lats.min()*100000)/100000 # use only 5 decimal places
+# lat_max = np.trunc(lats.max()*100000)/100000 # use only 5 decimal places
+lat_min = 18.04167
+lat_max = 53.625
 mask_path=maskfile
 mask_value = 0  # pixel value in admin_mask to exclude from the analysis
 daily = True # Type of climate data = True: daily, False: monthly
@@ -63,9 +72,9 @@ daily = True # Type of climate data = True: daily, False: monthly
 # enter personal and system info for output filename
 domain='china'
 person='KLG' # your initials
-location='HPC' #'home'#'SSC' # nickname for your location
-computer='Orion' #Windows10 # operating system
-processor='400p48h'  #'IntelCorei7-12800H' #'IntelZeonW2225' # 'bigmem' # processor
+location='SSC' #'HPC'#'home'#'SSC' # nickname for your location
+computer='Windows10'#'Orion' #Windows10 # operating system
+processor='IntelZeonW2225'#'400p48h'  #'IntelCorei7-12800H' #'IntelZeonW2225' # 'bigmem' # processor
 ram='32GB' # RAM
 test_tag='v2_1_2023JUL10' # short description of what is being timed
 
@@ -248,7 +257,7 @@ if (timetests==['all']) or ('getLGP, getLGPClassified, getLGPEquivalent' in time
     print('getLGP, getLGPClassified, getLGPEquivalent')
     taskstart=timeit()
     # call functions
-    lgp = clim_reg.getLGP( Sa = 100 )
+    lgp = clim_reg.getLGP( Sa = 100, D=1. )
     lgp_class = clim_reg.getLGPClassified(lgp)
     lgp_equv = clim_reg.getLGPEquivalent()
     results['getLGP, getLGPClassified, getLGPEquivalent']=timeit()-taskstart
