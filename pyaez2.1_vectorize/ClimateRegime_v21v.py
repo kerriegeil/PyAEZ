@@ -210,7 +210,6 @@ class ClimateRegime(object):
         winter_PET0=P_by_PET_monthly[:,:,JFMSON].sum(axis=2) # Oct-Mar  #KLG
 
         min_sealev_meanT=meanT_monthly_sealevel.min(axis=2)  #KLG
-        # range_meanT=meanT_monthly.max(axis=2) - meanT_monthly.min(axis=2)  #KLG
         Ta_diff=meanT_monthly_sealevel.max(axis=2) - meanT_monthly_sealevel.min(axis=2)  #KLG
         meanT=meanT_monthly.mean(axis=2)  #KLG
         nmo_ge_10C=(meanT_monthly_sealevel >= 10).sum(axis=2)  #KLG
@@ -349,51 +348,99 @@ class ClimateRegime(object):
         Returns:
             2D NumPy: Thermal Zones classification
         """        
-        thermal_zone = np.zeros((self.im_height, self.im_width))
-    
-        for i_row in range(self.im_height):
-            for i_col in range(self.im_width):
-                
-                obj_utilities = UtilitiesCalc.UtilitiesCalc()
+        # thermal_zone = np.zeros((self.im_height, self.im_width))
+        thermal_zone = np.empty((self.im_height,self.im_width))
+        thermal_zone[:] = np.nan        
 
-                meanT_monthly = obj_utilities.averageDailyToMonthly(self.meanT_daily[i_row, i_col, :])
-                meanT_monthly_sealevel =  obj_utilities.averageDailyToMonthly(self.meanT_daily_sealevel[i_row, i_col, :])
-    
-                if self.set_mask:
-                    if self.im_mask[i_row, i_col] == self.nodata_val:
-                        continue
-    
-                if np.min(meanT_monthly_sealevel) >= 18 and np.max(meanT_monthly)-np.min(meanT_monthly) < 15:
-                    if np.mean(meanT_monthly) > 20:
-                        thermal_zone[i_row,i_col] = 1 # Tropics Warm
-                    else:
-                        thermal_zone[i_row,i_col] = 2 # Tropics cool/cold/very cold
+        # converting daily to monthly
+        obj_utilities = UtilitiesCalc.UtilitiesCalc()
+        meanT_monthly = obj_utilities.averageDailyToMonthly(self.meanT_daily)
+        meanT_monthly_sealevel = obj_utilities.averageDailyToMonthly(self.meanT_daily_sealevel)
+
+        # things we need to determine the classes
+        # compute them here for readability below
+        min_sealev_meanT=meanT_monthly_sealevel.min(axis=2)
+        range_meanT=meanT_monthly.max(axis=2) - meanT_monthly.min(axis=2)
+        # Ta_diff=meanT_monthly_sealevel.max(axis=2) - meanT_monthly_sealevel.min(axis=2)  #KLG
+        meanT=meanT_monthly.mean(axis=2)
+        # do we need both of the next two?
+        nmo_gt_10C_sealev=(meanT_monthly_sealevel > 10).sum(axis=2)
+        nmo_ge_10C_sealev=(meanT_monthly_sealevel >= 10).sum(axis=2)
+        nmo_lt_5C=(meanT_monthly < 5).sum(axis=2)
+        nmo_gt_10C=(meanT_monthly > 10).sum(axis=2)
+        nmo_lt_10C=(meanT_monthly < 10).sum(axis=2)    
+
+
+
+        # Tropics, warm
+        thermal_zone=np.where((min_sealev_meanT>=18) & (range_meanT<15) & (meanT>20),1,thermal_zone)
+        # Tropics, cool/cold/very cold
+        thermal_zone=np.where((min_sealev_meanT>=18) & (range_meanT<15) & (meanT<=20) & ~np.isfinite(thermal_zone),2,thermal_zone)
+        # Subtropics, cool
+        thermal_zone=np.where((min_sealev_meanT>5) & (nmo_gt_10C_sealev>=8) & (nmo_lt_5C>=1) & (nmo_gt_10C>=4) & ~np.isfinite(thermal_zone),4,thermal_zone)
+        # Subtropics, cold
+        thermal_zone=np.where((min_sealev_meanT>5) & (nmo_gt_10C_sealev>=8) & (nmo_lt_5C>=1) & (nmo_gt_10C>=1) & ~np.isfinite(thermal_zone),5,thermal_zone)
+        #Subtropics, very cold
+        thermal_zone=np.where((min_sealev_meanT>5) & (nmo_gt_10C_sealev>=8) & (nmo_lt_10C==12) & ~np.isfinite(thermal_zone),6,thermal_zone)
+        # Subtropics, warm/mod. cool
+        thermal_zone=np.where((min_sealev_meanT>5) & (nmo_gt_10C_sealev>=8) & ~np.isfinite(thermal_zone),3,thermal_zone)        
+        # Temperate, cool
+        thermal_zone=np.where((nmo_ge_10C_sealev>=4) & (nmo_lt_5C>=1) & (nmo_gt_10C>=4) & ~np.isfinite(thermal_zone),7,thermal_zone)
+        # Temperate, cold
+        thermal_zone=np.where((nmo_ge_10C_sealev>=4) & (nmo_lt_5C>=1) & (nmo_gt_10C>=1) & ~np.isfinite(thermal_zone),8,thermal_zone)
+        # Temperate, very cold
+        thermal_zone=np.where((nmo_ge_10C_sealev>=4) & (nmo_lt_10C==12) & ~np.isfinite(thermal_zone),9,thermal_zone)
+        # Boreal, cold
+        thermal_zone=np.where((nmo_ge_10C_sealev>=1) & (nmo_lt_5C>=1) & (nmo_gt_10C>=1) & ~np.isfinite(thermal_zone),10,thermal_zone)
+        # Boreal, very cold
+        thermal_zone=np.where((nmo_ge_10C_sealev>=1) & (nmo_lt_10C==12) & ~np.isfinite(thermal_zone),11,thermal_zone)
+        # Arctic
+        thermal_zone=np.where(~np.isfinite(thermal_zone),12,thermal_zone)
+
+        # abandon loops for vectorization = much faster compute    
+        # for i_row in range(self.im_height):
+        #     for i_col in range(self.im_width):
                 
-                elif np.min(meanT_monthly_sealevel) > 5 and np.sum(meanT_monthly_sealevel > 10) >= 8:
-                    if np.sum(meanT_monthly<5) >= 1 and np.sum(meanT_monthly>10) >= 4:
-                        thermal_zone[i_row,i_col] =  4 # Subtropics, cool
-                    elif np.sum(meanT_monthly<5) >= 1 and np.sum(meanT_monthly>10) >= 1:
-                        thermal_zone[i_row,i_col] =  5 # Subtropics, cold
-                    elif np.sum(meanT_monthly<10) == 12:
-                        thermal_zone[i_row,i_col] =  6 # Subtropics, very cold
-                    else:
-                        thermal_zone[i_row,i_col] =  3 # Subtropics, warm/mod. cool
+        #         obj_utilities = UtilitiesCalc.UtilitiesCalc()
+
+        #         meanT_monthly = obj_utilities.averageDailyToMonthly(self.meanT_daily[i_row, i_col, :])
+        #         meanT_monthly_sealevel =  obj_utilities.averageDailyToMonthly(self.meanT_daily_sealevel[i_row, i_col, :])
     
-                elif np.sum(meanT_monthly_sealevel >= 10) >= 4:
-                    if np.sum(meanT_monthly<5) >= 1 and np.sum(meanT_monthly>10) >= 4:
-                        thermal_zone[i_row,i_col] =  7 # Temperate, cool
-                    elif np.sum(meanT_monthly<5) >= 1 and np.sum(meanT_monthly>10) >= 1:
-                        thermal_zone[i_row,i_col] =  8 # Temperate, cold
-                    elif np.sum(meanT_monthly<10) == 12:
-                        thermal_zone[i_row,i_col] =  9 # Temperate, very cold
+        #         if self.set_mask:
+        #             if self.im_mask[i_row, i_col] == self.nodata_val:
+        #                 continue
     
-                elif np.sum(meanT_monthly_sealevel >= 10) >= 1:
-                    if np.sum(meanT_monthly<5) >= 1 and np.sum(meanT_monthly>10) >= 1:
-                        thermal_zone[i_row,i_col] = 10 # Boreal, cold
-                    elif np.sum(meanT_monthly<10) == 12:
-                        thermal_zone[i_row,i_col] = 11 # Boreal, very cold
-                else:
-                        thermal_zone[i_row,i_col] = 12 # Arctic
+        #         if np.min(meanT_monthly_sealevel) >= 18 and np.max(meanT_monthly)-np.min(meanT_monthly) < 15:
+        #             if np.mean(meanT_monthly) > 20:
+        #                 thermal_zone[i_row,i_col] = 1 # Tropics Warm
+        #             else:
+        #                 thermal_zone[i_row,i_col] = 2 # Tropics cool/cold/very cold
+                
+        #         elif np.min(meanT_monthly_sealevel) > 5 and np.sum(meanT_monthly_sealevel > 10) >= 8:
+        #             if np.sum(meanT_monthly<5) >= 1 and np.sum(meanT_monthly>10) >= 4:
+        #                 thermal_zone[i_row,i_col] =  4 # Subtropics, cool
+        #             elif np.sum(meanT_monthly<5) >= 1 and np.sum(meanT_monthly>10) >= 1:
+        #                 thermal_zone[i_row,i_col] =  5 # Subtropics, cold
+        #             elif np.sum(meanT_monthly<10) == 12:
+        #                 thermal_zone[i_row,i_col] =  6 # Subtropics, very cold
+        #             else:
+        #                 thermal_zone[i_row,i_col] =  3 # Subtropics, warm/mod. cool
+    
+        #         elif np.sum(meanT_monthly_sealevel >= 10) >= 4:
+        #             if np.sum(meanT_monthly<5) >= 1 and np.sum(meanT_monthly>10) >= 4:
+        #                 thermal_zone[i_row,i_col] =  7 # Temperate, cool
+        #             elif np.sum(meanT_monthly<5) >= 1 and np.sum(meanT_monthly>10) >= 1:
+        #                 thermal_zone[i_row,i_col] =  8 # Temperate, cold
+        #             elif np.sum(meanT_monthly<10) == 12:
+        #                 thermal_zone[i_row,i_col] =  9 # Temperate, very cold
+    
+        #         elif np.sum(meanT_monthly_sealevel >= 10) >= 1:
+        #             if np.sum(meanT_monthly<5) >= 1 and np.sum(meanT_monthly>10) >= 1:
+        #                 thermal_zone[i_row,i_col] = 10 # Boreal, cold
+        #             elif np.sum(meanT_monthly<10) == 12:
+        #                 thermal_zone[i_row,i_col] = 11 # Boreal, very cold
+        #         else:
+        #                 thermal_zone[i_row,i_col] = 12 # Arctic
     
         if self.set_mask:
             return np.where(self.im_mask, thermal_zone, np.nan)
@@ -504,63 +551,103 @@ class ClimateRegime(object):
 
         Returns:
             2D NumPy: 18 2D arrays [A1-A9, B1-B9] correspond to each Temperature Profile class [days]
-        """        
-        # Smoothening the temperature curve
-        interp_daily_temp = np.zeros((self.im_height, self.im_width, 365))
-        days = np.arange(1,366)
-        for i_row in range(self.im_height):
-            for i_col in range(self.im_width):
-                temp_1D = self.meanT_daily[i_row, i_col, :]
-                # Creating quadratic spline fit to smoothen the time series along time dimension
-                quad_spl = np.poly1d(np.polyfit(days, temp_1D, 5))
-                interp_daily_temp[i_row, i_col, :] = quad_spl(days)
+        """    
+        # list of variable names to compute and output  #KLG
+        var_names = ['A1','A2','A3','A4','A5','A6','A7','A8','A9', \
+                    'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9']  #KLG
+        var_dict=dict.fromkeys(var_names)  #KLG
+
+        # # Smoothening the temperature curve
+        # interp_daily_temp = np.zeros((self.im_height, self.im_width, 365))
+        # days = np.arange(1,366)
+        # for i_row in range(self.im_height):
+        #     for i_col in range(self.im_width):
+        #         temp_1D = self.meanT_daily[i_row, i_col, :]
+        #         # Creating quadratic spline fit to smoothen the time series along time dimension
+        #         quad_spl = np.poly1d(np.polyfit(days, temp_1D, 5))
+        #         interp_daily_temp[i_row, i_col, :] = quad_spl(days)
         
         # we will use the interpolated temperature time series to decide and count
-        meanT_daily_add1day = np.concatenate((interp_daily_temp, interp_daily_temp[:,:,0:1]), axis=-1)
-        meanT_first = meanT_daily_add1day[:,:,:-1]
-        meanT_diff = meanT_daily_add1day[:,:,1:] - meanT_daily_add1day[:,:,:-1]
+        # meanT_daily_add1day = np.concatenate((interp_daily_temp, interp_daily_temp[:,:,0:1]), axis=-1)
+        # meanT_first = meanT_daily_add1day[:,:,:-1]
+        # meanT_diff = meanT_daily_add1day[:,:,1:] - meanT_daily_add1day[:,:,:-1]
+        meanT_first=self.interp_daily_temp  #KLG
+        meanT_diff=np.diff(self.interp_daily_temp,n=1,axis=2,append=self.interp_daily_temp[:,:,0:1])   #KLG
 
-        A9 = np.sum( np.logical_and(meanT_diff>0, meanT_first<-5), axis=2 )
-        A8 = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=-5, meanT_first<0)), axis=2 )
-        A7 = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=0, meanT_first<5)), axis=2 )
-        A6 = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=5, meanT_first<10)), axis=2 )
-        A5 = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=10, meanT_first<15)), axis=2 )
-        A4 = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=15, meanT_first<20)), axis=2 )
-        A3 = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=20, meanT_first<25)), axis=2 )
-        A2 = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=25, meanT_first<30)), axis=2 )
-        A1 = np.sum( np.logical_and(meanT_diff>0, meanT_first>=30), axis=2 )
+        # A9 = np.sum( np.logical_and(meanT_diff>0, meanT_first<-5), axis=2 )
+        # A8 = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=-5, meanT_first<0)), axis=2 )
+        # A7 = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=0, meanT_first<5)), axis=2 )
+        # A6 = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=5, meanT_first<10)), axis=2 )
+        # A5 = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=10, meanT_first<15)), axis=2 )
+        # A4 = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=15, meanT_first<20)), axis=2 )
+        # A3 = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=20, meanT_first<25)), axis=2 )
+        # A2 = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=25, meanT_first<30)), axis=2 )
+        # A1 = np.sum( np.logical_and(meanT_diff>0, meanT_first>=30), axis=2 )
 
-        B9 = np.sum( np.logical_and(meanT_diff<0, meanT_first<-5), axis=2 )
-        B8 = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=-5, meanT_first<0)), axis=2 )
-        B7 = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=0, meanT_first<5)), axis=2 )
-        B6 = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=5, meanT_first<10)), axis=2 )
-        B5 = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=10, meanT_first<15)), axis=2 )
-        B4 = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=15, meanT_first<20)), axis=2 )
-        B3 = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=20, meanT_first<25)), axis=2 )
-        B2 = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=25, meanT_first<30)), axis=2 )
-        B1 = np.sum( np.logical_and(meanT_diff<0, meanT_first>=30), axis=2 )
+        # B9 = np.sum( np.logical_and(meanT_diff<0, meanT_first<-5), axis=2 )
+        # B8 = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=-5, meanT_first<0)), axis=2 )
+        # B7 = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=0, meanT_first<5)), axis=2 )
+        # B6 = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=5, meanT_first<10)), axis=2 )
+        # B5 = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=10, meanT_first<15)), axis=2 )
+        # B4 = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=15, meanT_first<20)), axis=2 )
+        # B3 = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=20, meanT_first<25)), axis=2 )
+        # B2 = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=25, meanT_first<30)), axis=2 )
+        # B1 = np.sum( np.logical_and(meanT_diff<0, meanT_first>=30), axis=2 )
 
-        if self.set_mask:
-            return [np.ma.masked_where(self.im_mask == 0, A1),
-                    np.ma.masked_where(self.im_mask == 0, A2),
-                    np.ma.masked_where(self.im_mask == 0, A3),
-                    np.ma.masked_where(self.im_mask == 0, A4),
-                    np.ma.masked_where(self.im_mask == 0, A5),
-                    np.ma.masked_where(self.im_mask == 0, A6),
-                    np.ma.masked_where(self.im_mask == 0, A7),
-                    np.ma.masked_where(self.im_mask == 0, A8),
-                    np.ma.masked_where(self.im_mask == 0, A9),
-                    np.ma.masked_where(self.im_mask == 0, B1),
-                    np.ma.masked_where(self.im_mask == 0, B2),
-                    np.ma.masked_where(self.im_mask == 0, B3),
-                    np.ma.masked_where(self.im_mask == 0, B4),
-                    np.ma.masked_where(self.im_mask == 0, B5),
-                    np.ma.masked_where(self.im_mask == 0, B6),
-                    np.ma.masked_where(self.im_mask == 0, B7),
-                    np.ma.masked_where(self.im_mask == 0, B8),
-                    np.ma.masked_where(self.im_mask == 0, B9)]
-        else:
-            return [A1, A2, A3, A4, A5, A6, A7, A8, A9, B1, B2, B3, B4, B5, B6, B7, B8, B9]
+        var_dict['A9'] = np.sum( np.logical_and(meanT_diff>0, meanT_first<-5), axis=2 )  #KLG
+        var_dict['A8'] = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=-5, meanT_first<0)), axis=2 )  #KLG
+        var_dict['A7'] = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=0, meanT_first<5)), axis=2 )  #KLG
+        var_dict['A6'] = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=5, meanT_first<10)), axis=2 )  #KLG
+        var_dict['A5'] = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=10, meanT_first<15)), axis=2 )  #KLG
+        var_dict['A4'] = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=15, meanT_first<20)), axis=2 )  #KLG
+        var_dict['A3'] = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=20, meanT_first<25)), axis=2 )  #KLG
+        var_dict['A2'] = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=25, meanT_first<30)), axis=2 )  #KLG
+        var_dict['A1'] = np.sum( np.logical_and(meanT_diff>0, meanT_first>=30), axis=2 )  #KLG
+
+        var_dict['B9'] = np.sum( np.logical_and(meanT_diff<0, meanT_first<-5), axis=2 )  #KLG
+        var_dict['B8'] = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=-5, meanT_first<0)), axis=2 )  #KLG
+        var_dict['B7'] = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=0, meanT_first<5)), axis=2 )  #KLG
+        var_dict['B6'] = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=5, meanT_first<10)), axis=2 )  #KLG
+        var_dict['B5'] = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=10, meanT_first<15)), axis=2 )  #KLG
+        var_dict['B4'] = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=15, meanT_first<20)), axis=2 )  #KLG
+        var_dict['B3'] = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=20, meanT_first<25)), axis=2 )  #KLG
+        var_dict['B2'] = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=25, meanT_first<30)), axis=2 )   #KLG       
+        var_dict['B1'] = np.sum( np.logical_and(meanT_diff<0, meanT_first>=30), axis=2 )  #KLG
+
+        # if self.set_mask:
+        #     return [np.ma.masked_where(self.im_mask == 0, A1),
+        #             np.ma.masked_where(self.im_mask == 0, A2),
+        #             np.ma.masked_where(self.im_mask == 0, A3),
+        #             np.ma.masked_where(self.im_mask == 0, A4),
+        #             np.ma.masked_where(self.im_mask == 0, A5),
+        #             np.ma.masked_where(self.im_mask == 0, A6),
+        #             np.ma.masked_where(self.im_mask == 0, A7),
+        #             np.ma.masked_where(self.im_mask == 0, A8),
+        #             np.ma.masked_where(self.im_mask == 0, A9),
+        #             np.ma.masked_where(self.im_mask == 0, B1),
+        #             np.ma.masked_where(self.im_mask == 0, B2),
+        #             np.ma.masked_where(self.im_mask == 0, B3),
+        #             np.ma.masked_where(self.im_mask == 0, B4),
+        #             np.ma.masked_where(self.im_mask == 0, B5),
+        #             np.ma.masked_where(self.im_mask == 0, B6),
+        #             np.ma.masked_where(self.im_mask == 0, B7),
+        #             np.ma.masked_where(self.im_mask == 0, B8),
+        #             np.ma.masked_where(self.im_mask == 0, B9)]
+        # else:
+        #     return [A1, A2, A3, A4, A5, A6, A7, A8, A9, B1, B2, B3, B4, B5, B6, B7, B8, B9]
+
+        # apply the mask  #KLG
+        if self.set_mask:  #KLG
+            for var in var_names:  #KLG
+                var_dict[var]=np.ma.masked_where(self.im_mask == 0, var_dict[var])  #KLG
+
+        # assemble the list of return variables  #KLG
+        # the order of the variables in the returned list is the same as in var_names  #KLG
+        data_out=[]  #KLG
+        for var in var_names:  #KLG
+            data_out.append(var_dict[var].astype('float32'))  #KLG
+        
+        return data_out   #KLG                       
 
 
     def getLGP(self, Sa=100., D=1.):
@@ -578,78 +665,146 @@ class ClimateRegime(object):
         #============================
         Txsnm = 0.  # Txsnm - snow melt temperature threshold
         Fsnm = 5.5  # Fsnm - snow melting coefficient
-        Sb_old = 0.
-        Wb_old = 0.
+        # Sb_old = 0.
+        # Wb_old = 0.
+        Sb_old = np.zeros((self.im_height,self.im_width),dtype='float32')  #KLG
+        Wb_old = np.zeros((self.im_height,self.im_width),dtype='float32')  #KLG       
         #============================
         Tx365 = self.maxT_daily.copy()
         Ta365 = self.meanT_daily.copy()
         Pcp365 = self.totalPrec_daily.copy()
         self.Eto365 = self.pet_daily.copy()  # Eto
-        self.Etm365 = np.zeros(Tx365.shape)
-        self.Eta365 = np.zeros(Tx365.shape)
-        self.Sb365 = np.zeros(Tx365.shape)
-        self.Wb365 = np.zeros(Tx365.shape)
-        self.Wx365 = np.zeros(Tx365.shape)
-        self.kc365 = np.zeros(Tx365.shape)
-        meanT_daily_new = np.zeros(Tx365.shape)
-        self.maxT_daily_new = np.zeros(Tx365.shape)
-        lgp_tot = np.zeros((self.im_height, self.im_width))
+        # self.Etm365 = np.zeros(Tx365.shape)
+        # self.Eta365 = np.zeros(Tx365.shape)
+        # self.Sb365 = np.zeros(Tx365.shape)
+        # self.Wb365 = np.zeros(Tx365.shape)
+        # self.Wx365 = np.zeros(Tx365.shape)
+        # self.kc365 = np.zeros(Tx365.shape)
+        self.Etm365 = np.empty(Tx365.shape)  #KLG
+        self.Eta365 = np.empty(Tx365.shape)  #KLG
+        self.Sb365 = np.empty(Tx365.shape)  #KLG
+        self.Wb365 = np.empty(Tx365.shape)  #KLG
+        self.Wx365 = np.empty(Tx365.shape)  #KLG
+        self.kc365 = np.empty(Tx365.shape)  #KLG
+        self.Etm365[:],self.Eta365[:],self.Wb365[:],self.Wx365[:],self.Sb365[:],self.kc365[:]=np.nan,np.nan,np.nan,np.nan,np.nan,np.nan  #KLG
+
+        # meanT_daily_new = np.zeros(Tx365.shape)
+        # self.maxT_daily_new = np.zeros(Tx365.shape)
+        # lgp_tot = np.zeros((self.im_height, self.im_width))
         #============================
-        for i_row in range(self.im_height):
-            for i_col in range(self.im_width):
 
-                lgpt5_point = self.lgpt5[i_row, i_col]
+        # things we can pull out of the slow loops  #KLG
+        lgpt5 = self.lgpt5  #KLG
+        totalPrec_monthly = UtilitiesCalc.UtilitiesCalc().averageDailyToMonthly(self.totalPrec_daily)  #KLG
+        istart0, istart1 = LGPCalc.rainPeak(totalPrec_monthly, Ta365, lgpt5)  #KLG
+        p = LGPCalc.psh(np.zeros(self.Eto365.shape), self.Eto365)   #KLG
 
-                totalPrec_monthly = UtilitiesCalc.UtilitiesCalc().averageDailyToMonthly(self.totalPrec_daily[i_row, i_col, :])
-                meanT_daily_point = Ta365[i_row, i_col, :]
-                istart0, istart1 = LGPCalc.rainPeak(totalPrec_monthly, meanT_daily_point, lgpt5_point)
-                #----------------------------------
-                if self.set_mask:
-                    if self.im_mask[i_row, i_col] == self.nodata_val:
-                        continue
 
-                for doy in range(0, 365):
-                    p = LGPCalc.psh(
-                        0., self.Eto365[i_row, i_col, doy])
-                    Eta_new, Etm_new, Wb_new, Wx_new, Sb_new, kc_new = LGPCalc.EtaCalc(
-                        np.float64(Tx365[i_row, i_col, doy]), np.float64(
-                            Ta365[i_row, i_col, doy]),
-                            # Ta365[i_row, i_col, doy]),
-                        np.float64(Pcp365[i_row, i_col, doy]), Txsnm, Fsnm, np.float64(
-                            self.Eto365[i_row, i_col, doy]),
-                        Wb_old, Sb_old, doy, istart0, istart1,
-                        Sa, D, p, kc_list, lgpt5_point)
+        # for i_row in range(self.im_height):
+        #     for i_col in range(self.im_width):
 
-                    if Eta_new <0.: Eta_new = 0.
+        #         lgpt5_point = self.lgpt5[i_row, i_col]
 
-                    self.Eta365[i_row, i_col, doy] = Eta_new
-                    self.Etm365[i_row, i_col, doy] = Etm_new
-                    self.Wb365[i_row, i_col, doy] = Wb_new
-                    self.Wx365[i_row, i_col, doy] = Wx_new
-                    self.Sb365[i_row, i_col, doy] = Sb_new
-                    self.kc365[i_row, i_col, doy] = kc_new
+        #         totalPrec_monthly = UtilitiesCalc.UtilitiesCalc().averageDailyToMonthly(self.totalPrec_daily[i_row, i_col, :])
+        #         meanT_daily_point = Ta365[i_row, i_col, :]
+        #         istart0, istart1 = LGPCalc.rainPeak(totalPrec_monthly, meanT_daily_point, lgpt5_point)
+        #         #----------------------------------
+        #         if self.set_mask:
+        #             if self.im_mask[i_row, i_col] == self.nodata_val:
+        #                 continue
 
-                    Wb_old = Wb_new
-                    Sb_old = Sb_new
+        #         for doy in range(0, 365):
+        #             p = LGPCalc.psh(
+        #                 0., self.Eto365[i_row, i_col, doy])
+        #             Eta_new, Etm_new, Wb_new, Wx_new, Sb_new, kc_new = LGPCalc.EtaCalc(
+        #                 np.float64(Tx365[i_row, i_col, doy]), np.float64(
+        #                     Ta365[i_row, i_col, doy]),
+        #                     # Ta365[i_row, i_col, doy]),
+        #                 np.float64(Pcp365[i_row, i_col, doy]), Txsnm, Fsnm, np.float64(
+        #                     self.Eto365[i_row, i_col, doy]),
+        #                 Wb_old, Sb_old, doy, istart0, istart1,
+        #                 Sa, D, p, kc_list, lgpt5_point)
+
+        #             if Eta_new <0.: Eta_new = 0.
+
+        #             self.Eta365[i_row, i_col, doy] = Eta_new
+        #             self.Etm365[i_row, i_col, doy] = Etm_new
+        #             self.Wb365[i_row, i_col, doy] = Wb_new
+        #             self.Wx365[i_row, i_col, doy] = Wx_new
+        #             self.Sb365[i_row, i_col, doy] = Sb_new
+        #             self.kc365[i_row, i_col, doy] = kc_new
+
+        #             Wb_old = Wb_new
+        #             Sb_old = Sb_new
+
+        # eliminate all but the time loop  #KLG
+        if self.set_mask:
+            mask=self.im_mask
+        else:
+            mask=np.ones((self.im_height,self.im_width),dtype='int')
+        
+        for doy in range(self.doy_start-1, self.doy_end):  #KLG
+            Eta_new, Etm_new, Wb_new, Wx_new, Sb_new, kc_new = LGPCalc.EtaCalc(
+                                    mask,
+                                    np.float64(Tx365[:,:,doy]), 
+                                    np.float64(Ta365[:,:,doy]),
+                                    np.float64(Pcp365[:,:,doy]), 
+                                    Txsnm, 
+                                    Fsnm, 
+                                    np.float64(self.Eto365[:,:,doy]),
+                                    Wb_old, 
+                                    Sb_old, 
+                                    doy, 
+                                    istart0, 
+                                    istart1,
+                                    Sa, 
+                                    D, 
+                                    p[:,:,doy], 
+                                    kc_list, 
+                                    self.lgpt5)  #KLG
+
+            self.Eta365[:,:,doy]=Eta_new  #KLG
+            self.Etm365[:,:,doy]=Etm_new  #KLG
+            self.Wb365[:,:,doy]=Wb_new  #KLG
+            self.Wx365[:,:,doy]=Wx_new  #KLG
+            self.Sb365[:,:,doy]=Sb_new  #KLG
+            self.kc365[:,:,doy]=kc_new  #KLG
+
+            Wb_old=Wb_new  #KLG
+            Sb_old=Sb_new  #KLG
+
+        self.Eta365=np.where(self.Eta365<0,0,self.Eta365)  #KLG
         #============================================
-        for i_row in range(self.im_height):
-            for i_col in range(self.im_width):
-                if self.set_mask:
-                    if self.im_mask[i_row, i_col] == self.nodata_val:
-                        continue
-                Etm365X = np.append(self.Etm365[i_row, i_col, :], self.Etm365[i_row, i_col, :])
-                Eta365X = np.append(self.Eta365[i_row, i_col, :], self.Eta365[i_row, i_col, :])
-                islgp = LGPCalc.islgpt(self.meanT_daily[i_row, i_col, :])
-                xx = LGPCalc.val10day(Eta365X)
-                yy = LGPCalc.val10day(Etm365X)
-                lgp_whole = xx[:365]/yy[:365]
-                count = 0
-                for i in range(len(lgp_whole)):
-                    if islgp[i] == 1 and lgp_whole[i] >= 0.4:
-                        count = count+1
+        # for i_row in range(self.im_height):
+        #     for i_col in range(self.im_width):
+        #         if self.set_mask:
+        #             if self.im_mask[i_row, i_col] == self.nodata_val:
+        #                 continue
+        #         Etm365X = np.append(self.Etm365[i_row, i_col, :], self.Etm365[i_row, i_col, :])
+        #         Eta365X = np.append(self.Eta365[i_row, i_col, :], self.Eta365[i_row, i_col, :])
+        #         islgp = LGPCalc.islgpt(self.meanT_daily[i_row, i_col, :])
+        #         xx = LGPCalc.val10day(Eta365X)
+        #         yy = LGPCalc.val10day(Etm365X)
+        #         lgp_whole = xx[:365]/yy[:365]
+        #         count = 0
+        #         for i in range(len(lgp_whole)):
+        #             if islgp[i] == 1 and lgp_whole[i] >= 0.4:
+        #                 count = count+1
 
-                lgp_tot[i_row, i_col] = count
+        #         lgp_tot[i_row, i_col] = count
+        Etm365X = np.append(self.Etm365, self.Etm365[:,:,0:30],axis=2)  #KLG
+        Eta365X = np.append(self.Eta365, self.Eta365[:,:,0:30],axis=2)  #KLG
 
+        # eliminate call to LGPCalc.islgpt  #KLG
+        islgp=np.where(self.meanT_daily>=5,1,0)  #KLG
+        
+        xx = LGPCalc.val10day(Eta365X)  #KLG
+        yy = LGPCalc.val10day(Etm365X)  #KLG
+    
+        with np.errstate(divide='ignore', invalid='ignore'):  #KLG
+            lgp_whole = xx[:,:,:self.doy_end]/yy[:,:,:self.doy_end]  #KLG
+
+        lgp_tot=np.where((islgp==1)&(lgp_whole>=0.4),1,0).sum(axis=2)  #KLG
         
         if self.set_mask:
             return np.where(self.im_mask, lgp_tot, np.nan)
