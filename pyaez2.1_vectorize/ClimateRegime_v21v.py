@@ -194,7 +194,7 @@ class ClimateRegime(object):
         """        
         # Note that currently, this thermal climate is designed only for the northern hemisphere, southern hemisphere is not implemented yet.
 
-        thermal_climate = np.empty((self.im_height,self.im_width))  #KLG
+        thermal_climate = np.empty((self.im_height,self.im_width),dtype='float32')  #KLG
         thermal_climate[:] = np.nan  #KLG
 
         # converting daily to monthly  #KLG
@@ -335,9 +335,9 @@ class ClimateRegime(object):
         #             thermal_climate[i_row, i_col] = 12
                     
         if self.set_mask:
-            return np.where(self.im_mask, thermal_climate, np.nan)
+            return np.where(self.im_mask, thermal_climate.astype('float32'), np.nan)  #KLG
         else:
-            return thermal_climate
+            return thermal_climate.astype('float32')  #KLG
 
     
 
@@ -349,7 +349,7 @@ class ClimateRegime(object):
             2D NumPy: Thermal Zones classification
         """        
         # thermal_zone = np.zeros((self.im_height, self.im_width))
-        thermal_zone = np.empty((self.im_height,self.im_width))
+        thermal_zone = np.empty((self.im_height,self.im_width),dtype='float32')  #KLG
         thermal_zone[:] = np.nan        
 
         # converting daily to monthly
@@ -443,9 +443,9 @@ class ClimateRegime(object):
         #                 thermal_zone[i_row,i_col] = 12 # Arctic
     
         if self.set_mask:
-            return np.where(self.im_mask, thermal_zone, np.nan)
+            return np.where(self.im_mask, thermal_zone.astype('float32'), np.nan)  #KLG
         else:
-            return thermal_zone
+            return thermal_zone.astype('float32')  #KLG
 
     def getThermalLGP0(self):
         """Calculate Thermal Length of Growing Period (LGPt) with 
@@ -463,7 +463,7 @@ class ClimateRegime(object):
             lgpt0 = np.where(self.im_mask,lgpt0,np.nan)
         
         self.lgpt0=lgpt0.copy()
-        return lgpt0
+        return lgpt0.astype('float32')
 
 
     def getThermalLGP5(self):
@@ -479,7 +479,7 @@ class ClimateRegime(object):
             lgpt5 = np.where(self.im_mask,lgpt5,np.nan)
 
         self.lgpt5 = lgpt5.copy()
-        return lgpt5
+        return lgpt5.astype('float32')
 
     def getThermalLGP10(self):
         """Calculate Thermal Length of Growing Period (LGPt) with
@@ -495,7 +495,7 @@ class ClimateRegime(object):
             lgpt10 = np.where(self.im_mask, lgpt10, np.nan)
 
         self.lgpt10 = lgpt10.copy()
-        return lgpt10
+        return lgpt10.astype('float32')
 
     def getTemperatureSum0(self):
         """Calculate temperature summation at temperature threshold 
@@ -807,9 +807,9 @@ class ClimateRegime(object):
         lgp_tot=np.where((islgp==1)&(lgp_whole>=0.4),1,0).sum(axis=2)  #KLG
         
         if self.set_mask:
-            return np.where(self.im_mask, lgp_tot, np.nan)
+            return np.where(self.im_mask, lgp_tot.astype('float32'), np.nan)  #KLG
         else:
-            return lgp_tot
+            return lgp_tot.astype('float32')  #KLG
   
     def getLGPClassified(self, lgp): # Original PyAEZ source code
         """This function calculates the classification of moisture regime using LGP.
@@ -822,7 +822,7 @@ class ClimateRegime(object):
         """        
         # 
 
-        lgp_class = np.zeros(lgp.shape)
+        lgp_class = np.zeros(lgp.shape,dtype='float32')  #KLG
 
         lgp_class[lgp>=365] = 7 # Per-humid
         lgp_class[np.logical_and(lgp>=270, lgp<365)] = 6 # Humid
@@ -851,7 +851,7 @@ class ClimateRegime(object):
         lgp_equv[moisture_index > 2.4] = 366
 
         if self.set_mask:
-            return np.where(self.im_mask, lgp_equv, np.nan)
+            return np.where(self.im_mask, lgp_equv.astype('float32'), np.nan)  #KLG
         else:
             return lgp_equv
 
@@ -883,47 +883,63 @@ class ClimateRegime(object):
         tzonefallow = np.zeros((self.im_height, self.im_width), dtype= int)
         annual_Tmean = np.mean(self.meanT_daily, axis = 2)
         obj_utilities = UtilitiesCalc.UtilitiesCalc()
+        max_meanTmonthly = obj_utilities.averageDailyToMonthly(self.meanT_daily).max(axis=2)  #KLG
 
         # thermal zone class definitions for fallow requirement
-        for i_row in range(self.im_height):
-            for i_col in range(self.im_width):
+        # for i_row in range(self.im_height):
+        #     for i_col in range(self.im_width):
 
-                if self.set_mask:
-                    if self.im_mask[i_row, i_col] == self.nodata_val:
-                        continue
-                # Checking tropics thermal zone
-                if tzone[i_row, i_col] == 1 or tzone[i_row, i_col] == 2:
+        #         if self.set_mask:
+        #             if self.im_mask[i_row, i_col] == self.nodata_val:
+        #                 continue
+        #         # Checking tropics thermal zone
+        #         if tzone[i_row, i_col] == 1 or tzone[i_row, i_col] == 2:
                     
-                    # Class 1: tropics, mean annual T > 25 deg C
-                    if annual_Tmean[i_row, i_col] > 25:
-                        tzonefallow[i_row, i_col] = 1
+        #             # Class 1: tropics, mean annual T > 25 deg C
+        #             if annual_Tmean[i_row, i_col] > 25:
+        #                 tzonefallow[i_row, i_col] = 1
                     
-                    # Class 2: tropics, mean annual T 20-25 deg C
-                    elif annual_Tmean[i_row, i_col] > 20:
-                        tzonefallow[i_row, i_col] = 2
+        #             # Class 2: tropics, mean annual T 20-25 deg C
+        #             elif annual_Tmean[i_row, i_col] > 20:
+        #                 tzonefallow[i_row, i_col] = 2
                     
-                    # Class 3: tropics, mean annual T 15-20 deg C
-                    elif annual_Tmean[i_row, i_col] > 15:
-                        tzonefallow[i_row, i_col] = 3
+        #             # Class 3: tropics, mean annual T 15-20 deg C
+        #             elif annual_Tmean[i_row, i_col] > 15:
+        #                 tzonefallow[i_row, i_col] = 3
                     
-                    # Class 4: tropics, mean annual T < 15 deg C
-                    else:
-                        tzonefallow[i_row, i_col] = 4
+        #             # Class 4: tropics, mean annual T < 15 deg C
+        #             else:
+        #                 tzonefallow[i_row, i_col] = 4
                 
-                # Checking the non-tropical zones
-                else:
-                    meanT_monthly = obj_utilities.averageDailyToMonthly(self.meanT_daily[i_row, i_col, :])
-                    # Class 5: mean T of the warmest month > 20 deg C
-                    if np.max(meanT_monthly) > 20:
-                        tzonefallow[i_row, i_col] = 5
+        #         # Checking the non-tropical zones
+        #         else:
+        #             meanT_monthly = obj_utilities.averageDailyToMonthly(self.meanT_daily[i_row, i_col, :])
+        #             # Class 5: mean T of the warmest month > 20 deg C
+        #             if np.max(meanT_monthly) > 20:
+        #                 tzonefallow[i_row, i_col] = 5
                         
-                    else:
-                        tzonefallow[i_row, i_col] = 6
+        #             else:
+        #                 tzonefallow[i_row, i_col] = 6
+
+        # Checking tropics thermal zone
+        # Class 1: tropics, mean annual T > 25 deg C
+        tzonefallow=np.where(((tzone==1)|(tzone==2))&(annual_Tmean>25),1,tzonefallow)  #KLG
+        # Class 2: tropics, mean annual T 20-25 deg C  #KLG
+        tzonefallow=np.where(((tzone==1)|(tzone==2))&(annual_Tmean>20)&(tzonefallow==0),2,tzonefallow)  #KLG
+        # Class 3: tropics, mean annual T 15-20 deg C  #KLG
+        tzonefallow=np.where(((tzone==1)|(tzone==2))&(annual_Tmean>15)&(tzonefallow==0),3,tzonefallow)  #KLG
+        # Class 4: tropics, mean annual T < 15 deg C  #KLG
+        tzonefallow=np.where(((tzone==1)|(tzone==2))&(annual_Tmean<=15)&(tzonefallow==0),4,tzonefallow)  #KLG
+        # Checking the non-tropical zones  #KLG
+        # Class 5: mean T of the warmest month > 20 deg C  #KLG
+        tzonefallow=np.where((tzone!=1)&(tzone!=2)&(max_meanTmonthly>20)&(tzonefallow==0),5,tzonefallow)  #KLG
+        tzonefallow=np.where((tzone!=1)&(tzone!=2)&(max_meanTmonthly<=20)&(tzonefallow==0),6,tzonefallow) #KLG   
+
                             
         if self.set_mask:
-            return np.where(self.im_mask, tzonefallow, np.nan)
+            return np.where(self.im_mask, tzonefallow.astype('float32'), np.nan) #KLG
         else:
-            return tzonefallow
+            return tzonefallow.astype('float32') #KLG
     
   
     
@@ -941,46 +957,52 @@ class ClimateRegime(object):
         air_frost_index/permafrost : a python list: [air frost number, permafrost classes]
 
         """
-        fi = np.zeros((self.im_height, self.im_width), dtype=float)
-        permafrost = np.zeros((self.im_height, self.im_width), dtype=int)
-        ddt = np.zeros((self.im_height, self.im_width), dtype=float) # thawing index
-        ddf = np.zeros((self.im_height, self.im_width), dtype=float) # freezing index
+        # fi = np.zeros((self.im_height, self.im_width), dtype=float)
+        permafrost = np.zeros((self.im_height, self.im_width), dtype=int) 
+        # ddt = np.zeros((self.im_height, self.im_width), dtype=float) # thawing index
+        # ddf = np.zeros((self.im_height, self.im_width), dtype=float) # freezing index
         meanT_gt_0 = self.meanT_daily.copy()
         meanT_le_0 = self.meanT_daily.copy()
         
         meanT_gt_0[meanT_gt_0 <=0] = 0 # removing all negative temperatures for summation
         meanT_le_0[meanT_gt_0 >0] = 0 # removing all positive temperatures for summation 
-        ddt = np.sum(meanT_gt_0, axis = 2)
-        ddf = - np.sum(meanT_le_0, axis = 2)  
+        ddt = np.sum(meanT_gt_0, axis = 2) # thawing index
+        ddf = - np.sum(meanT_le_0, axis = 2)  # freezing index
         fi = np.sqrt(ddf)/(np.sqrt(ddf) + np.sqrt(ddt)) 
+
         # now, we will classify the permafrost zones (Reference: GAEZ v4 model documentation: Pg35 -37)
-        for i_row in range(self.im_height):
-            for i_col in range(self.im_width):
-                if self.set_mask:
-                    if self.im_mask[i_row, i_col] == self.nodata_val:
-                        continue         
-                # Continuous Permafrost Class
-                if fi[i_row, i_col]> 0.625:
-                    permafrost[i_row, i_col] = 1
+        # for i_row in range(self.im_height):
+        #     for i_col in range(self.im_width):
+        #         if self.set_mask:
+        #             if self.im_mask[i_row, i_col] == self.nodata_val:
+        #                 continue         
+        #         # Continuous Permafrost Class
+        #         if fi[i_row, i_col]> 0.625:
+        #             permafrost[i_row, i_col] = 1
                 
-                # Discontinuous Permafrost Class
-                if fi[i_row, i_col]> 0.57 and fi[i_row, i_col]< 0.625:
-                    permafrost[i_row, i_col] = 2
+        #         # Discontinuous Permafrost Class
+        #         if fi[i_row, i_col]> 0.57 and fi[i_row, i_col]< 0.625:
+        #             permafrost[i_row, i_col] = 2
                 
-                # Sporadic Permafrost Class
-                if fi[i_row, i_col]> 0.495 and fi[i_row, i_col]< 0.57:
-                    permafrost[i_row, i_col] = 3
+        #         # Sporadic Permafrost Class
+        #         if fi[i_row, i_col]> 0.495 and fi[i_row, i_col]< 0.57:
+        #             permafrost[i_row, i_col] = 3
                 
-                # No Permafrost Class
-                if fi[i_row, i_col]< 0.495:
-                    permafrost[i_row, i_col] = 4
-        # to remove the division by zero, the nan values will be converted into
+        #         # No Permafrost Class
+        #         if fi[i_row, i_col]< 0.495:
+        #             permafrost[i_row, i_col] = 4
+        permafrost=np.where(fi>0.625,1,permafrost) # Continuous Permafrost Class  #KLG
+        permafrost=np.where((fi>0.57)&(fi<=0.625),2,permafrost) # Discontinuous Permafost Class  #KLG
+        permafrost=np.where((fi>0.495)&(fi<=0.57),3,permafrost) # Sporadic Permafrost Class  #KLG
+        permafrost=np.where(fi<=0.495,4,permafrost) # No Permafrost Class #KLG
+
+        # to remove the division by zero, the nan values will be converted to zero
         fi = np.nan_to_num(fi)
 
         if self.set_mask:
-            return [np.where(self.im_mask, fi, np.nan), np.where(self.im_mask, permafrost , np.nan)]
+            return [np.where(self.im_mask, fi.astype('float32'), np.nan), np.where(self.im_mask, permafrost.astype('float32'), np.nan)]  #KLG
         else:
-            return [fi, permafrost]
+            return [fi.astype('float32'), permafrost.astype('float32')]  #KLG
         
   
 
@@ -1418,203 +1440,276 @@ class ClimateRegime(object):
     """
          
     def getMultiCroppingZones(self, t_climate, lgp, lgp_t5, lgp_t10, ts_t10, ts_t0):
-        
+        """
+        This function refers to the assessment of multiple cropping potential
+        across the area through matching both growth cycle and temperature
+        requirements for individual suitable crops with time avaiability of 
+        crop growth. The logic considers crop suitability for rainfed and 
+        irrigated conditions.
+
+        Args:
+        ----------
+        t_climate : a 2-D numpy array
+            Thermal Climate.
+        lgp : a 2-D numpy array
+            Length of Growing Period.
+        lgp_t5 : a 2-D numpy array
+            Thermal growing period in days with mean daily temperatures above 5 degree Celsius.
+        lgp_t10 : a 2-D numpy array
+            Thermal growing period in days with mean daily temperatures above 10 degree Celsius.
+        ts_t10 : a 2-D numpy array
+            Accumulated temperature (degree-days) on days when mean daily temperature is greater or equal to 10 degree Celsius.
+        ts_t0 : a 2-D numpy array
+            Accumulated temperature (degree-days) on days when mean daily temperature is greater or equal to 0 degree Celsius.
+        tsg_t5 : a 2-D numpy array
+            Accumulated temperature on growing period days when mean daily temperature is greater or equal to 5 degree Celsius.
+        tsg_t10 : a 2-D numpy array
+            Accumulated temperature on growing period days when mean daily temperature is greater or equal to 10 degree Celsius.
+
+        Returns
+        -------
+        A list of two 2-D numpy arrays. The first array refers to multi-cropping
+        zone for rainfed condition, and the second refers to multi-cropping zone
+        for irrigated condition.
+
+        """        
         # defining the constant arrays for rainfed and irrigated conditions, all pixel values start with 1
-        multi_crop_rain = np.zeros((self.im_height, self.im_width), dtype = int) # all values started with Zone A
-        multi_crop_irr = np.zeros((self.im_height, self.im_width), dtype = int) # all vauels starts with Zone A
-        
-        ts_g_t5 = np.zeros((self.im_height, self.im_width))
-        ts_g_t10 = np.zeros((self.im_height, self.im_width))
+        # multi_crop_rain = np.zeros((self.im_height, self.im_width), dtype = int) # all values started with Zone A
+        # multi_crop_irr = np.zeros((self.im_height, self.im_width), dtype = int) # all vauels starts with Zone A
+        multi_crop_rain = np.ones((self.im_height, self.im_width), dtype = int) # all values started with Zone A  #KLG
+        multi_crop_irr = np.ones((self.im_height, self.im_width), dtype = int) # all vauels starts with Zone A  #KLG
+        # ts_g_t5 = np.zeros((self.im_height, self.im_width))
+        # ts_g_t10 = np.zeros((self.im_height, self.im_width))          
         
         # Calculation of Accumulated temperature during the growing period at specific temperature thresholds: 5 and 10 degree Celsius
-        
-        for i_r in range(self.im_height):
-            for i_c in range(self.im_width):
+        interp_meanT_veg_T5=np.where(self.interp_daily_temp>=5.,self.interp_daily_temp,np.nan)  #KLG
+        interp_meanT_veg_T10=np.where(self.interp_daily_temp>=10.,self.interp_daily_temp,np.nan)  #KLG
+        ts_g_t5=np.nansum(interp_meanT_veg_T5,axis=2)  #KLG
+        ts_g_t10=np.nansum(interp_meanT_veg_T10,axis=2)  #KLG
+
+        # for i_r in range(self.im_height):
+        #     for i_c in range(self.im_width):
                 
-                if self.set_mask:
+        #         if self.set_mask:
                     
-                    if self.im_mask[i_r, i_c]== self.nodata_val:
-                        continue
+        #             if self.im_mask[i_r, i_c]== self.nodata_val:
+        #                 continue
                     
-                    else:
+        #             else:
                         
-                        temp_1D = self.meanT_daily[i_r, i_c, :]
-                        days = np.arange(0,365)
+        #                 temp_1D = self.meanT_daily[i_r, i_c, :]
+        #                 days = np.arange(0,365)
                         
-                        deg = 5 # order of polynomical fit
+        #                 deg = 5 # order of polynomical fit
                         
-                        # creating the function of polyfit
-                        polyfit = np.poly1d(np.polyfit(days,temp_1D,deg))
+        #                 # creating the function of polyfit
+        #                 polyfit = np.poly1d(np.polyfit(days,temp_1D,deg))
                         
-                        # getting the interpolated value at each DOY
-                        interp_daily_temp = polyfit(days)
+        #                 # getting the interpolated value at each DOY
+        #                 interp_daily_temp = polyfit(days)
                         
-                        # Getting the start and end day of vegetative period
-                        # The crop growth requires minimum temperature of at least 5 deg Celsius
-                        # If not, the first DOY and the lst DOY of a year will be considered
-                        try:
-                            veg_period = days[interp_daily_temp >=5]
-                            start_veg = veg_period[0]
-                            end_veg = veg_period[-1]
-                        except:
-                            start_veg = 0
-                            end_veg = 364
+        #                 # Getting the start and end day of vegetative period
+        #                 # The crop growth requires minimum temperature of at least 5 deg Celsius
+        #                 # If not, the first DOY and the lst DOY of a year will be considered
+        #                 try:
+        #                     veg_period = days[interp_daily_temp >=5]
+        #                     start_veg = veg_period[0]
+        #                     end_veg = veg_period[-1]
+        #                 except:
+        #                     start_veg = 0
+        #                     end_veg = 364
                         
-                        # Slicing the temperature within the vegetative period
-                        interp_meanT_veg_T5 = interp_daily_temp[start_veg:end_veg]
-                        interp_meanT_veg_T10 =  interp_daily_temp[start_veg:end_veg] *1
+        #                 # Slicing the temperature within the vegetative period
+        #                 interp_meanT_veg_T5 = interp_daily_temp[start_veg:end_veg]
+        #                 interp_meanT_veg_T10 =  interp_daily_temp[start_veg:end_veg] *1
                         
-                        # Removing the temperature of 5 and 10 deg Celsius thresholds
-                        interp_meanT_veg_T5[interp_meanT_veg_T5 < 5] = 0
-                        interp_meanT_veg_T10[interp_meanT_veg_T10 <10] = 0
+        #                 # Removing the temperature of 5 and 10 deg Celsius thresholds
+        #                 interp_meanT_veg_T5[interp_meanT_veg_T5 < 5] = 0
+        #                 interp_meanT_veg_T10[interp_meanT_veg_T10 <10] = 0
                         
-                        # Calculation of Accumulated temperatures during growing period
-                        ts_g_t5[i_r, i_c] = np.sum(interp_meanT_veg_T5)
-                        ts_g_t10[i_r, i_c] = np.sum(interp_meanT_veg_T10)
-        
+        #                 # Calculation of Accumulated temperatures during growing period
+        #                 ts_g_t5[i_r, i_c] = np.sum(interp_meanT_veg_T5)
+        #                 ts_g_t10[i_r, i_c] = np.sum(interp_meanT_veg_T10)
+
         """Multi cropping zonation for rainfed conditions"""
-        for i_r in range(self.im_height):
-            for i_c in range(self.im_width):
+        multi_crop_rain=np.where((t_climate==1)&(lgp>=360)&(lgp_t5>=360)&(lgp_t10>=360)&(ts_t0>=7200)&(ts_t10>=7000),8,multi_crop_rain)  #KLG
+        multi_crop_rain=np.where((t_climate==1)&(lgp>=300)&(lgp_t5>=300)&(lgp_t10>=240)&(ts_t0>=7200)&(ts_g_t5>=5100)&(ts_g_t10>=4800)&(multi_crop_rain==1),6,multi_crop_rain)  #KLG
+        multi_crop_rain=np.where((t_climate==1)&(lgp>=270)&(lgp_t5>=270)&(lgp_t10>=165)&(ts_t0>=5500)&(ts_g_t5>=4000)&(ts_g_t10>=3200)&(multi_crop_rain==1),4,multi_crop_rain)  #KLG
+        multi_crop_rain=np.where((t_climate==1)&(lgp>=240)&(lgp_t5>=240)&(lgp_t10>=165)&(ts_t0>=6400)&(ts_g_t5>=4000)&(ts_g_t10>=3200)&(multi_crop_rain==1),4,multi_crop_rain)  #KLG
+        multi_crop_rain=np.where((t_climate==1)&(lgp>=210)&(lgp_t5>=240)&(lgp_t10>=165)&(ts_t0>=7200)&(ts_g_t5>=4000)&(ts_g_t10>=3200)&(multi_crop_rain==1),4,multi_crop_rain)  #KLG
+        multi_crop_rain=np.where((t_climate==1)&(lgp>=220)&(lgp_t5>=220)&(lgp_t10>=120)&(ts_t0>=5500)&(ts_g_t5>=3200)&(ts_g_t10>=2700)&(multi_crop_rain==1),3,multi_crop_rain)  #KLG
+        multi_crop_rain=np.where((t_climate==1)&(lgp>=200)&(lgp_t5>=200)&(lgp_t10>=120)&(ts_t0>=6400)&(ts_g_t5>=3200)&(ts_g_t10>=2700)&(multi_crop_rain==1),3,multi_crop_rain)  #KLG
+        multi_crop_rain=np.where((t_climate==1)&(lgp>=180)&(lgp_t5>=200)&(lgp_t10>=120)&(ts_t0>=7200)&(ts_g_t5>=3200)&(ts_g_t10>=2700)&(multi_crop_rain==1),3,multi_crop_rain)  #KLG
+        multi_crop_rain=np.where((t_climate==1)&(lgp>=45)&(lgp_t5>=120)&(lgp_t10>=90)&(ts_t0>=1600)&(ts_t10>=1200)&(multi_crop_rain==1),2,multi_crop_rain)   #KLG
+
+        multi_crop_rain=np.where((t_climate!=1)&(lgp>=360)&(lgp_t5>=360)&(lgp_t10>=330)&(ts_t0>=7200)&(ts_t10>=7000)&(multi_crop_rain==1),8,multi_crop_rain)  #KLG
+        multi_crop_rain=np.where((t_climate!=1)&(lgp>=330)&(lgp_t5>=330)&(lgp_t10>=270)&(ts_t0>=5700)&(ts_t10>=5500)&(multi_crop_rain==1),7,multi_crop_rain)  #KLG
+        multi_crop_rain=np.where((t_climate!=1)&(lgp>=300)&(lgp_t5>=300)&(lgp_t10>=240)&(ts_t0>=5400)&(ts_t10>=5100)&(ts_g_t5>=5100)&(ts_g_t10>=4800)&(multi_crop_rain==1),6,multi_crop_rain)  #KLG
+        multi_crop_rain=np.where((t_climate!=1)&(lgp>=240)&(lgp_t5>=270)&(lgp_t10>=180)&(ts_t0>=4800)&(ts_t10>=4500)&(ts_g_t5>=4300)&(ts_g_t10>=4000)&(multi_crop_rain==1),5,multi_crop_rain)  #KLG
+        multi_crop_rain=np.where((t_climate!=1)&(lgp>=210)&(lgp_t5>=240)&(lgp_t10>=165)&(ts_t0>=4500)&(ts_t10>=3600)&(ts_g_t5>=4000)&(ts_g_t10>=3200)&(multi_crop_rain==1),4,multi_crop_rain)  #KLG
+        multi_crop_rain=np.where((t_climate!=1)&(lgp>=180)&(lgp_t5>=200)&(lgp_t10>=120)&(ts_t0>=3600)&(ts_t10>=3000)&(ts_g_t5>=3200)&(ts_g_t10>=2700)&(multi_crop_rain==1),3,multi_crop_rain)  #KLG
+        multi_crop_rain=np.where((t_climate!=1)&(lgp>=45)&(lgp_t5>=120)&(lgp_t10>=90)&(ts_t0>=1600)&(ts_t10>=1200)&(multi_crop_rain==1),2,multi_crop_rain)  #KLG
+                                                     
+        # for i_r in range(self.im_height):
+        #     for i_c in range(self.im_width):
                 
-                if self.set_mask:
+        #         if self.set_mask:
                     
-                    if self.im_mask[i_r, i_c]== self.nodata_val:
-                        continue
+        #             if self.im_mask[i_r, i_c]== self.nodata_val:
+        #                 continue
                     
-                    else:
+        #             else:
                         
-                        if t_climate[i_r, i_c]== 1:
+        #                 if t_climate[i_r, i_c]== 1:
                             
-                            if np.all([lgp[i_r, i_c]>=360, lgp_t5[i_r, i_c]>=360, lgp_t10[i_r, i_c]>=360, ts_t0[i_r, i_c]>=7200, ts_t10[i_r, i_c]>=7000])== True:
-                                multi_crop_rain[i_r, i_c] = 8
+        #                     if np.all([lgp[i_r, i_c]>=360, lgp_t5[i_r, i_c]>=360, lgp_t10[i_r, i_c]>=360, ts_t0[i_r, i_c]>=7200, ts_t10[i_r, i_c]>=7000])== True:
+        #                         multi_crop_rain[i_r, i_c] = 8
                             
-                            elif np.all([lgp[i_r, i_c]>=300, lgp_t5[i_r, i_c]>=300, lgp_t10[i_r, i_c]>=240, ts_t0[i_r, i_c]>=7200, ts_g_t5[i_r, i_c]>=5100, ts_g_t10[i_r, i_c]>=4800])== True:
-                                multi_crop_rain[i_r, i_c] = 6
+        #                     elif np.all([lgp[i_r, i_c]>=300, lgp_t5[i_r, i_c]>=300, lgp_t10[i_r, i_c]>=240, ts_t0[i_r, i_c]>=7200, ts_g_t5[i_r, i_c]>=5100, ts_g_t10[i_r, i_c]>=4800])== True:
+        #                         multi_crop_rain[i_r, i_c] = 6
                             
-                            elif np.all([lgp[i_r, i_c]>=270, lgp_t5[i_r, i_c]>=270, lgp_t10[i_r, i_c]>=165, ts_t0[i_r, i_c]>=5500, ts_g_t5[i_r, i_c]>=4000, ts_g_t10[i_r, i_c]>=3200])== True:
-                                multi_crop_rain[i_r, i_c] = 4 # Ok
+        #                     elif np.all([lgp[i_r, i_c]>=270, lgp_t5[i_r, i_c]>=270, lgp_t10[i_r, i_c]>=165, ts_t0[i_r, i_c]>=5500, ts_g_t5[i_r, i_c]>=4000, ts_g_t10[i_r, i_c]>=3200])== True:
+        #                         multi_crop_rain[i_r, i_c] = 4 # Ok
                                 
-                            elif np.all([lgp[i_r, i_c]>=240, lgp_t5[i_r, i_c]>=240, lgp_t10[i_r, i_c]>=165, ts_t0[i_r, i_c]>=6400, ts_g_t5[i_r, i_c]>=4000, ts_g_t10[i_r, i_c]>=3200])== True:
-                                multi_crop_rain[i_r, i_c] = 4 # Ok
+        #                     elif np.all([lgp[i_r, i_c]>=240, lgp_t5[i_r, i_c]>=240, lgp_t10[i_r, i_c]>=165, ts_t0[i_r, i_c]>=6400, ts_g_t5[i_r, i_c]>=4000, ts_g_t10[i_r, i_c]>=3200])== True:
+        #                         multi_crop_rain[i_r, i_c] = 4 # Ok
                             
-                            elif np.all([lgp[i_r, i_c]>=210, lgp_t5[i_r, i_c]>=240, lgp_t10[i_r, i_c]>=165, ts_t0[i_r, i_c]>=7200, ts_g_t5[i_r, i_c]>=4000, ts_g_t10[i_r, i_c]>=3200])== True:
-                                multi_crop_rain[i_r, i_c] = 4 # OK
+        #                     elif np.all([lgp[i_r, i_c]>=210, lgp_t5[i_r, i_c]>=240, lgp_t10[i_r, i_c]>=165, ts_t0[i_r, i_c]>=7200, ts_g_t5[i_r, i_c]>=4000, ts_g_t10[i_r, i_c]>=3200])== True:
+        #                         multi_crop_rain[i_r, i_c] = 4 # OK
                             
-                            elif np.all([lgp[i_r, i_c]>=220, lgp_t5[i_r, i_c]>=220, lgp_t10[i_r, i_c]>=120, ts_t0[i_r, i_c]>=5500, ts_g_t5[i_r, i_c]>=3200, ts_g_t10[i_r, i_c]>=2700])== True:
-                                multi_crop_rain[i_r, i_c] = 3 #OK
+        #                     elif np.all([lgp[i_r, i_c]>=220, lgp_t5[i_r, i_c]>=220, lgp_t10[i_r, i_c]>=120, ts_t0[i_r, i_c]>=5500, ts_g_t5[i_r, i_c]>=3200, ts_g_t10[i_r, i_c]>=2700])== True:
+        #                         multi_crop_rain[i_r, i_c] = 3 #OK
                             
-                            elif np.all([lgp[i_r, i_c]>=200, lgp_t5[i_r, i_c]>=200, lgp_t10[i_r, i_c]>=120, ts_t0[i_r, i_c]>=6400, ts_g_t5[i_r, i_c]>=3200, ts_g_t10[i_r, i_c]>=2700])== True:
-                                multi_crop_rain[i_r, i_c] = 3# OK
+        #                     elif np.all([lgp[i_r, i_c]>=200, lgp_t5[i_r, i_c]>=200, lgp_t10[i_r, i_c]>=120, ts_t0[i_r, i_c]>=6400, ts_g_t5[i_r, i_c]>=3200, ts_g_t10[i_r, i_c]>=2700])== True:
+        #                         multi_crop_rain[i_r, i_c] = 3# OK
                             
-                            elif np.all([lgp[i_r, i_c]>=180, lgp_t5[i_r, i_c]>=200, lgp_t10[i_r, i_c]>=120, ts_t0[i_r, i_c]>=7200, ts_g_t5[i_r, i_c]>=3200, ts_g_t10[i_r, i_c]>=2700])== True:
-                                multi_crop_rain[i_r, i_c] = 3 # OK
+        #                     elif np.all([lgp[i_r, i_c]>=180, lgp_t5[i_r, i_c]>=200, lgp_t10[i_r, i_c]>=120, ts_t0[i_r, i_c]>=7200, ts_g_t5[i_r, i_c]>=3200, ts_g_t10[i_r, i_c]>=2700])== True:
+        #                         multi_crop_rain[i_r, i_c] = 3 # OK
                             
-                            elif np.all([lgp[i_r, i_c]>=45, lgp_t5[i_r, i_c]>=120, lgp_t10[i_r, i_c]>=90, ts_t0[i_r, i_c]>=1600, ts_t10[i_r, i_c]>=1200]) == True:
-                                multi_crop_rain[i_r, i_c] = 2 # Ok
+        #                     elif np.all([lgp[i_r, i_c]>=45, lgp_t5[i_r, i_c]>=120, lgp_t10[i_r, i_c]>=90, ts_t0[i_r, i_c]>=1600, ts_t10[i_r, i_c]>=1200]) == True:
+        #                         multi_crop_rain[i_r, i_c] = 2 # Ok
                                 
-                            else:
-                                multi_crop_rain[i_r, i_c] = 1 # Ok
+        #                     else:
+        #                         multi_crop_rain[i_r, i_c] = 1 # Ok
                             
-                        elif t_climate[i_r, i_c] != 1:
+        #                 elif t_climate[i_r, i_c] != 1:
                             
-                            if np.all([lgp[i_r, i_c]>=360, lgp_t5[i_r, i_c]>=360, lgp_t10[i_r, i_c]>=330, ts_t0[i_r, i_c]>=7200, ts_t10[i_r, i_c]>=7000])== True:
-                                multi_crop_rain[i_r, i_c] = 8 # Ok
+        #                     if np.all([lgp[i_r, i_c]>=360, lgp_t5[i_r, i_c]>=360, lgp_t10[i_r, i_c]>=330, ts_t0[i_r, i_c]>=7200, ts_t10[i_r, i_c]>=7000])== True:
+        #                         multi_crop_rain[i_r, i_c] = 8 # Ok
                             
-                            elif np.all([lgp[i_r, i_c]>=330, lgp_t5[i_r, i_c]>=330, lgp_t10[i_r, i_c]>=270, ts_t0[i_r, i_c]>=5700, ts_t10[i_r, i_c]>=5500])== True:
-                                multi_crop_rain[i_r, i_c] = 7 # Ok
+        #                     elif np.all([lgp[i_r, i_c]>=330, lgp_t5[i_r, i_c]>=330, lgp_t10[i_r, i_c]>=270, ts_t0[i_r, i_c]>=5700, ts_t10[i_r, i_c]>=5500])== True:
+        #                         multi_crop_rain[i_r, i_c] = 7 # Ok
                             
-                            elif np.all([lgp[i_r, i_c]>=300, lgp_t5[i_r, i_c]>=300, lgp_t10[i_r, i_c]>=240, ts_t0[i_r, i_c]>=5400, ts_t10[i_r, i_c]>=5100, ts_g_t5[i_r, i_c]>=5100, ts_g_t10[i_r, i_c]>=4800])== True:
-                                multi_crop_rain[i_r, i_c] = 6 # Ok
+        #                     elif np.all([lgp[i_r, i_c]>=300, lgp_t5[i_r, i_c]>=300, lgp_t10[i_r, i_c]>=240, ts_t0[i_r, i_c]>=5400, ts_t10[i_r, i_c]>=5100, ts_g_t5[i_r, i_c]>=5100, ts_g_t10[i_r, i_c]>=4800])== True:
+        #                         multi_crop_rain[i_r, i_c] = 6 # Ok
                             
-                            elif np.all([lgp[i_r, i_c]>=240, lgp_t5[i_r, i_c]>=270, lgp_t10[i_r, i_c]>=180, ts_t0[i_r, i_c]>=4800, ts_t10[i_r, i_c]>=4500, ts_g_t5[i_r, i_c]>=4300, ts_g_t10[i_r, i_c]>=4000])== True:
-                                multi_crop_rain[i_r, i_c] = 5 # Ok
+        #                     elif np.all([lgp[i_r, i_c]>=240, lgp_t5[i_r, i_c]>=270, lgp_t10[i_r, i_c]>=180, ts_t0[i_r, i_c]>=4800, ts_t10[i_r, i_c]>=4500, ts_g_t5[i_r, i_c]>=4300, ts_g_t10[i_r, i_c]>=4000])== True:
+        #                         multi_crop_rain[i_r, i_c] = 5 # Ok
                             
-                            elif np.all([lgp[i_r, i_c]>=210, lgp_t5[i_r, i_c]>=240, lgp_t10[i_r, i_c]>=165, ts_t0[i_r, i_c]>=4500, ts_t10[i_r, i_c]>=3600, ts_g_t5[i_r, i_c]>=4000, ts_g_t10[i_r, i_c]>=3200])== True:
-                                multi_crop_rain[i_r, i_c] = 4 #OK
+        #                     elif np.all([lgp[i_r, i_c]>=210, lgp_t5[i_r, i_c]>=240, lgp_t10[i_r, i_c]>=165, ts_t0[i_r, i_c]>=4500, ts_t10[i_r, i_c]>=3600, ts_g_t5[i_r, i_c]>=4000, ts_g_t10[i_r, i_c]>=3200])== True:
+        #                         multi_crop_rain[i_r, i_c] = 4 #OK
                             
-                            elif np.all([lgp[i_r, i_c]>=180, lgp_t5[i_r, i_c]>=200, lgp_t10[i_r, i_c]>=120, ts_t0[i_r, i_c]>=3600, ts_t10[i_r, i_c]>=3000, ts_g_t5[i_r, i_c]>=3200, ts_g_t10[i_r, i_c]>=2700])== True:
-                                multi_crop_rain[i_r, i_c] = 3 # Ok
+        #                     elif np.all([lgp[i_r, i_c]>=180, lgp_t5[i_r, i_c]>=200, lgp_t10[i_r, i_c]>=120, ts_t0[i_r, i_c]>=3600, ts_t10[i_r, i_c]>=3000, ts_g_t5[i_r, i_c]>=3200, ts_g_t10[i_r, i_c]>=2700])== True:
+        #                         multi_crop_rain[i_r, i_c] = 3 # Ok
                             
-                            elif np.all([lgp[i_r, i_c]>=45, lgp_t5[i_r, i_c]>=120, lgp_t10[i_r, i_c]>=90, ts_t0[i_r, i_c]>=1600, ts_t10[i_r, i_c]>=1200]) == True:
-                                multi_crop_rain[i_r, i_c] = 2 #Ok
+        #                     elif np.all([lgp[i_r, i_c]>=45, lgp_t5[i_r, i_c]>=120, lgp_t10[i_r, i_c]>=90, ts_t0[i_r, i_c]>=1600, ts_t10[i_r, i_c]>=1200]) == True:
+        #                         multi_crop_rain[i_r, i_c] = 2 #Ok
                             
-                            else:
-                                multi_crop_rain[i_r, i_c] = 1 #Ok
+        #                     else:
+        #                         multi_crop_rain[i_r, i_c] = 1 #Ok
                             
         
         """Multi cropping zonation for irrigated conditions"""
-        for i_r in range(self.im_height):
-            for i_c in range(self.im_width):
+        multi_crop_irr=np.where((t_climate==1)&(lgp_t5>=360)&(lgp_t10>=360)&(ts_t0>=7200)&(ts_t10>=7000),8,multi_crop_irr)  #KLG
+        multi_crop_irr=np.where((t_climate==1)&(lgp_t5>=300)&(lgp_t10>=240)&(ts_t0>=7200)&(ts_g_t5>=5100)&(ts_g_t10>=4800)&(multi_crop_irr==1),6,multi_crop_irr)  #KLG
+        multi_crop_irr=np.where((t_climate==1)&(lgp_t5>=270)&(lgp_t10>=165)&(ts_t0>=5500)&(ts_g_t5>=4000)&(ts_g_t10>=3200)&(multi_crop_rain==1),4,multi_crop_irr)  #KLG
+        multi_crop_irr=np.where((t_climate==1)&(lgp_t5>=240)&(lgp_t10>=165)&(ts_t0>=6400)&(ts_g_t5>=4000)&(ts_g_t10>=3200)&(multi_crop_rain==1),4,multi_crop_irr)  #KLG
+        multi_crop_irr=np.where((t_climate==1)&(lgp_t5>=240)&(lgp_t10>=165)&(ts_t0>=7200)&(ts_g_t5>=4000)&(ts_g_t10>=3200)&(multi_crop_rain==1),4,multi_crop_irr)  #KLG
+        multi_crop_irr=np.where((t_climate==1)&(lgp_t5>=220)&(lgp_t10>=120)&(ts_t0>=5500)&(ts_g_t5>=3200)&(ts_g_t10>=2700)&(multi_crop_rain==1),3,multi_crop_irr)  #KLG
+        multi_crop_irr=np.where((t_climate==1)&(lgp_t5>=200)&(lgp_t10>=120)&(ts_t0>=6400)&(ts_g_t5>=3200)&(ts_g_t10>=2700)&(multi_crop_rain==1),3,multi_crop_irr)  #KLG
+        multi_crop_irr=np.where((t_climate==1)&(lgp_t5>=200)&(lgp_t10>=120)&(ts_t0>=7200)&(ts_g_t5>=3200)&(ts_g_t10>=2700)&(multi_crop_rain==1),3,multi_crop_irr)  #KLG
+        multi_crop_irr=np.where((t_climate==1)&(lgp_t5>=120)&(lgp_t10>=90)&(ts_t0>=1600)&(ts_t10>=1200)&(multi_crop_rain==1),2,multi_crop_irr)  #KLG
+
+        multi_crop_irr=np.where((t_climate!=1)&(lgp_t5>=360)&(lgp_t10>=330)&(ts_t0>=7200)&(ts_t10>=7000)&(multi_crop_rain==1),8,multi_crop_irr)  #KLG
+        multi_crop_irr=np.where((t_climate!=1)&(lgp_t5>=330)&(lgp_t10>=270)&(ts_t0>=5700)&(ts_t10>=5500)&(multi_crop_rain==1),7,multi_crop_irr)  #KLG
+        multi_crop_irr=np.where((t_climate!=1)&(lgp_t5>=300)&(lgp_t10>=240)&(ts_t0>=5400)&(ts_t10>=5100)&(ts_g_t5>=5100)&(ts_g_t10>=4800)&(multi_crop_rain==1),6,multi_crop_irr)  #KLG
+        multi_crop_irr=np.where((t_climate!=1)&(lgp_t5>=270)&(lgp_t10>=180)&(ts_t0>=4800)&(ts_t10>=4500)&(ts_g_t5>=4300)&(ts_g_t10>=4000)&(multi_crop_rain==1),5,multi_crop_irr)  #KLG
+        multi_crop_irr=np.where((t_climate!=1)&(lgp_t5>=240)&(lgp_t10>=165)&(ts_t0>=4500)&(ts_t10>=3600)&(ts_g_t5>=4000)&(ts_g_t10>=3200)&(multi_crop_rain==1),4,multi_crop_irr)  #KLG
+        multi_crop_irr=np.where((t_climate!=1)&(lgp_t5>=200)&(lgp_t10>=120)&(ts_t0>=3600)&(ts_t10>=3000)&(ts_g_t5>=3200)&(ts_g_t10>=2700)&(multi_crop_rain==1),3,multi_crop_irr)  #KLG
+        multi_crop_irr=np.where((t_climate!=1)&(lgp_t5>=120)&(lgp_t10>=90)&(ts_t0>=1600)&(ts_t10>=1200)&(multi_crop_rain==1),2,multi_crop_irr)  #KLG
+
+        # for i_r in range(self.im_height):
+        #     for i_c in range(self.im_width):
                 
-                if self.set_mask:
+        #         if self.set_mask:
                     
-                    if self.im_mask[i_r, i_c]== self.nodata_val:
-                        continue
+        #             if self.im_mask[i_r, i_c]== self.nodata_val:
+        #                 continue
                     
-                    else:
+        #             else:
                         
-                        if t_climate[i_r, i_c]== 1:
+        #                 if t_climate[i_r, i_c]== 1:
                             
-                            if np.all([lgp_t5[i_r, i_c]>=360, lgp_t10[i_r, i_c]>=360, ts_t0[i_r, i_c]>=7200, ts_t10[i_r, i_c]>=7000])==True:
-                                multi_crop_irr[i_r, i_c] =8 # ok
+        #                     if np.all([lgp_t5[i_r, i_c]>=360, lgp_t10[i_r, i_c]>=360, ts_t0[i_r, i_c]>=7200, ts_t10[i_r, i_c]>=7000])==True:
+        #                         multi_crop_irr[i_r, i_c] =8 # ok
                             
-                            elif np.all([lgp_t5[i_r, i_c]>=300, lgp_t10[i_r, i_c]>=240, ts_t0[i_r, i_c]>=7200, ts_g_t5[i_r, i_c]>=5100, ts_g_t10[i_r, i_c]>=4800])==True:
-                                multi_crop_irr[i_r, i_c] =6 # ok
+        #                     elif np.all([lgp_t5[i_r, i_c]>=300, lgp_t10[i_r, i_c]>=240, ts_t0[i_r, i_c]>=7200, ts_g_t5[i_r, i_c]>=5100, ts_g_t10[i_r, i_c]>=4800])==True:
+        #                         multi_crop_irr[i_r, i_c] =6 # ok
                             
-                            elif np.all([lgp_t5[i_r, i_c]>=270, lgp_t10[i_r, i_c]>=165, ts_t0[i_r, i_c]>=5500, ts_g_t5[i_r, i_c]>=4000, ts_g_t10[i_r, i_c]>=3200]) == True:
-                                multi_crop_irr[i_r, i_c] =4 # Ok
+        #                     elif np.all([lgp_t5[i_r, i_c]>=270, lgp_t10[i_r, i_c]>=165, ts_t0[i_r, i_c]>=5500, ts_g_t5[i_r, i_c]>=4000, ts_g_t10[i_r, i_c]>=3200]) == True:
+        #                         multi_crop_irr[i_r, i_c] =4 # Ok
                             
-                            elif np.all([lgp_t5[i_r, i_c]>=240, lgp_t10[i_r, i_c]>=165, ts_t0[i_r, i_c]>=6400, ts_g_t5[i_r, i_c]>=4000, ts_g_t10[i_r, i_c]>=3200])== True:
-                                multi_crop_irr[i_r, i_c] =4 #ok
+        #                     elif np.all([lgp_t5[i_r, i_c]>=240, lgp_t10[i_r, i_c]>=165, ts_t0[i_r, i_c]>=6400, ts_g_t5[i_r, i_c]>=4000, ts_g_t10[i_r, i_c]>=3200])== True:
+        #                         multi_crop_irr[i_r, i_c] =4 #ok
                             
-                            elif np.all([lgp_t5[i_r, i_c]>=240, lgp_t10[i_r, i_c]>=165, ts_t0[i_r, i_c]>=7200, ts_g_t5[i_r, i_c]>=4000, ts_g_t10[i_r, i_c]>=3200])== True:
-                                multi_crop_irr[i_r, i_c] =4 # ok
+        #                     elif np.all([lgp_t5[i_r, i_c]>=240, lgp_t10[i_r, i_c]>=165, ts_t0[i_r, i_c]>=7200, ts_g_t5[i_r, i_c]>=4000, ts_g_t10[i_r, i_c]>=3200])== True:
+        #                         multi_crop_irr[i_r, i_c] =4 # ok
                             
-                            elif np.all([lgp_t5[i_r, i_c]>=220, lgp_t10[i_r, i_c]>=120, ts_t0[i_r, i_c]>=5500, ts_g_t5[i_r, i_c]>=3200, ts_g_t10[i_r, i_c]>=2700]) == True:
-                                multi_crop_irr[i_r, i_c] =3 #Ok
+        #                     elif np.all([lgp_t5[i_r, i_c]>=220, lgp_t10[i_r, i_c]>=120, ts_t0[i_r, i_c]>=5500, ts_g_t5[i_r, i_c]>=3200, ts_g_t10[i_r, i_c]>=2700]) == True:
+        #                         multi_crop_irr[i_r, i_c] =3 #Ok
                                 
-                            elif np.all([lgp_t5[i_r, i_c]>=200, lgp_t10[i_r, i_c]>=120, ts_t0[i_r, i_c]>=6400, ts_g_t5[i_r, i_c]>=3200, ts_g_t10[i_r, i_c]>=2700])== True:
-                                multi_crop_irr[i_r, i_c] =3 #ok
+        #                     elif np.all([lgp_t5[i_r, i_c]>=200, lgp_t10[i_r, i_c]>=120, ts_t0[i_r, i_c]>=6400, ts_g_t5[i_r, i_c]>=3200, ts_g_t10[i_r, i_c]>=2700])== True:
+        #                         multi_crop_irr[i_r, i_c] =3 #ok
                             
-                            elif np.all([lgp_t5[i_r, i_c]>=200, lgp_t10[i_r, i_c]>=120, ts_t0[i_r, i_c]>=7200, ts_g_t5[i_r, i_c]>=3200, ts_g_t10[i_r, i_c]>=2700])==True:
-                                multi_crop_irr[i_r, i_c] =3 # Ok
+        #                     elif np.all([lgp_t5[i_r, i_c]>=200, lgp_t10[i_r, i_c]>=120, ts_t0[i_r, i_c]>=7200, ts_g_t5[i_r, i_c]>=3200, ts_g_t10[i_r, i_c]>=2700])==True:
+        #                         multi_crop_irr[i_r, i_c] =3 # Ok
                             
-                            elif np.all([lgp_t5[i_r, i_c]>=120, lgp_t10[i_r, i_c]>=90, ts_t0[i_r, i_c]>=1600, ts_t10[i_r, i_c]>=1200]) == True:
-                                multi_crop_irr[i_r, i_c] =2 # Ok
+        #                     elif np.all([lgp_t5[i_r, i_c]>=120, lgp_t10[i_r, i_c]>=90, ts_t0[i_r, i_c]>=1600, ts_t10[i_r, i_c]>=1200]) == True:
+        #                         multi_crop_irr[i_r, i_c] =2 # Ok
                             
-                            else:
-                                multi_crop_irr[i_r, i_c] =1 # Ok
+        #                     else:
+        #                         multi_crop_irr[i_r, i_c] =1 # Ok
                         
-                        elif t_climate[i_r, i_c] != 1:
+        #                 elif t_climate[i_r, i_c] != 1:
                             
-                            if np.all([lgp_t5[i_r, i_c]>=360, lgp_t10[i_r, i_c]>=330, ts_t0[i_r, i_c]>=7200, ts_t10[i_r, i_c]>=7000])==True:
-                                multi_crop_irr[i_r, i_c] = 8
+        #                     if np.all([lgp_t5[i_r, i_c]>=360, lgp_t10[i_r, i_c]>=330, ts_t0[i_r, i_c]>=7200, ts_t10[i_r, i_c]>=7000])==True:
+        #                         multi_crop_irr[i_r, i_c] = 8
                             
-                            elif np.all([lgp_t5[i_r, i_c]>=330, lgp_t10[i_r, i_c]>=270, ts_t0[i_r, i_c]>=5700, ts_t10[i_r, i_c]>=5500])==True:
-                                multi_crop_irr[i_r, i_c] = 7 # ok
+        #                     elif np.all([lgp_t5[i_r, i_c]>=330, lgp_t10[i_r, i_c]>=270, ts_t0[i_r, i_c]>=5700, ts_t10[i_r, i_c]>=5500])==True:
+        #                         multi_crop_irr[i_r, i_c] = 7 # ok
                             
-                            elif np.all([lgp_t5[i_r, i_c]>=300, lgp_t10[i_r, i_c]>=240, ts_t0[i_r, i_c]>=5400, ts_t10[i_r, i_c]>=5100, ts_g_t5[i_r, i_c]>=5100, ts_g_t10[i_r, i_c]>=4800])==True:
-                                multi_crop_irr[i_r, i_c] = 6 #ok
+        #                     elif np.all([lgp_t5[i_r, i_c]>=300, lgp_t10[i_r, i_c]>=240, ts_t0[i_r, i_c]>=5400, ts_t10[i_r, i_c]>=5100, ts_g_t5[i_r, i_c]>=5100, ts_g_t10[i_r, i_c]>=4800])==True:
+        #                         multi_crop_irr[i_r, i_c] = 6 #ok
                             
-                            elif np.all([lgp_t5[i_r, i_c]>=270, lgp_t10[i_r, i_c]>=180, ts_t0[i_r, i_c]>=4800, ts_t10[i_r, i_c]>=4500, ts_g_t5[i_r, i_c]>=4300, ts_g_t10[i_r, i_c]>=4000])==True:
-                                multi_crop_irr[i_r, i_c] = 5 #ok
+        #                     elif np.all([lgp_t5[i_r, i_c]>=270, lgp_t10[i_r, i_c]>=180, ts_t0[i_r, i_c]>=4800, ts_t10[i_r, i_c]>=4500, ts_g_t5[i_r, i_c]>=4300, ts_g_t10[i_r, i_c]>=4000])==True:
+        #                         multi_crop_irr[i_r, i_c] = 5 #ok
                             
-                            elif np.all([lgp_t5[i_r, i_c]>=240, lgp_t10[i_r, i_c]>=165, ts_t0[i_r, i_c]>=4500, ts_t10[i_r, i_c]>=3600, ts_g_t5[i_r, i_c]>=4000, ts_g_t10[i_r, i_c]>=3200])==True:
-                                multi_crop_irr[i_r, i_c] = 4 #ok
+        #                     elif np.all([lgp_t5[i_r, i_c]>=240, lgp_t10[i_r, i_c]>=165, ts_t0[i_r, i_c]>=4500, ts_t10[i_r, i_c]>=3600, ts_g_t5[i_r, i_c]>=4000, ts_g_t10[i_r, i_c]>=3200])==True:
+        #                         multi_crop_irr[i_r, i_c] = 4 #ok
                             
-                            elif np.all([lgp_t5[i_r, i_c]>=200, lgp_t10[i_r, i_c]>=120, ts_t0[i_r, i_c]>=3600, ts_t10[i_r, i_c]>=3000, ts_g_t5[i_r, i_c]>=3200, ts_g_t10[i_r, i_c]>=2700])==True:
-                                multi_crop_irr[i_r, i_c] = 3 # ok
+        #                     elif np.all([lgp_t5[i_r, i_c]>=200, lgp_t10[i_r, i_c]>=120, ts_t0[i_r, i_c]>=3600, ts_t10[i_r, i_c]>=3000, ts_g_t5[i_r, i_c]>=3200, ts_g_t10[i_r, i_c]>=2700])==True:
+        #                         multi_crop_irr[i_r, i_c] = 3 # ok
                             
-                            elif np.all([lgp_t5[i_r, i_c]>=120, lgp_t10[i_r, i_c]>=90, ts_t0[i_r, i_c]>=1600, ts_t10[i_r, i_c]>=1200])==True:
-                                multi_crop_irr[i_r, i_c] = 2 #ok
+        #                     elif np.all([lgp_t5[i_r, i_c]>=120, lgp_t10[i_r, i_c]>=90, ts_t0[i_r, i_c]>=1600, ts_t10[i_r, i_c]>=1200])==True:
+        #                         multi_crop_irr[i_r, i_c] = 2 #ok
                             
-                            else:
-                                multi_crop_irr[i_r, i_c] = 1
+        #                     else:
+        #                         multi_crop_irr[i_r, i_c] = 1
 
         if self.set_mask:
-            return [np.where(self.im_mask, multi_crop_rain, np.nan), np.where(self.im_mask, multi_crop_irr, np.nan)]
+            return [np.where(self.im_mask, multi_crop_rain.astype('float32'), np.nan), np.where(self.im_mask, multi_crop_irr.astype('float32'), np.nan)]  #KLG
         else:        
-            return [multi_crop_rain, multi_crop_irr]
+            return [multi_crop_rain.astype('float32'), multi_crop_irr.astype('float32')]  #KLG
                         
     
 
