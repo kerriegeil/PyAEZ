@@ -36,7 +36,7 @@ from collections import OrderedDict as odict
 # Kerrie laptop
 work_dir = 'C://Users/kerrie/Documents/01_LocalCode/repos/PyAEZ/' # path to your PyAEZ repo
 data_dir = 'C://Users/kerrie/Documents/02_LocalData/pyAEZ_input_data/china/' # path to your data
-maskfile = 'C://Users/kerrie/Documents/02_LocalData/pyAEZ_input_data/china/mask.nc'# subset for no antarctica, 1800 lats
+maskfile = 'C://Users/kerrie/Documents/02_LocalData/pyAEZ_input_data/china/mask.tif'# subset for no antarctica, 1800 lats
 elevfile = 'C://Users/kerrie/Documents/02_LocalData/pyAEZ_input_data/china/elev.nc'
 out_path = work_dir+'time_scripts/results/' # path for saving output data
 
@@ -46,9 +46,9 @@ if not isExist:
    os.makedirs(out_path)
 
 sys.path.append(work_dir+'pyaez_v2.1beta/') # add pyaez model to system path
-import ClimateRegime as ClimateRegime
+import ClimateRegime_v2_1 as ClimateRegime
 clim_reg = ClimateRegime.ClimateRegime()
-import UtilitiesCalc as UtilitiesCalc
+import UtilitiesCalc_v2_1 as UtilitiesCalc
 obj_utilities=UtilitiesCalc.UtilitiesCalc()
 
 # Define the Area-Of-Interest's geographical extents
