@@ -7,7 +7,7 @@ the climatic data provided by the PyAEZ user.
 
 """
 import numpy as np
-import numba as nb
+# import numba as nb
 
 class ETOCalc(object):
  
