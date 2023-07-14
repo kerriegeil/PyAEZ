@@ -1,0 +1,14 @@
+                                           module1 all funcs         139.553    s
+                                 input data load to mem time             1.2    s
+                                            setStudyAreaMask             0.0    s
+                                      setLocationTerrainData           0.001    s
+                                         setDailyClimateData          41.213    s
+                                           getThermalClimate           0.766    s
+                                              getThermalZone           0.455    s
+             getThermalLGP0, getThermalLGP5, getThermalLGP10             0.3    s
+ getTemperatureSum0, getTemperatureSum5, getTemperatureSum10           0.658    s
+                                       getTemperatureProfile           5.509    s
+                  getLGP, getLGPClassified, getLGPEquivalent          87.252    s
+                                       getMultiCroppingZones           1.394    s
+                        AirFrostIndexandPermafrostEvaluation           0.456    s
+                                      TZoneFallowRequirement           0.215    s
