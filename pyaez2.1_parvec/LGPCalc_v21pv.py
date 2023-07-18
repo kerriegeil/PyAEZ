@@ -6,6 +6,7 @@ PyAEZ: LGPCalc.py calculates the length of growing period (LGP)
 
 # from numba import jit
 import numpy as np
+import dask
 
 
 # @jit(nopython=True)
@@ -429,6 +430,7 @@ def Eta_class(mask,lgpt5,ta,tx,tmelt):
 
     return eta_class
 
+@dask.delayed
 def EtaCalc_snow(mask,kc_list,eto,sb_old,pr,wb_old,Sa,D,p):
     """compute actual evapotranspiration (ETa) for ET regime "class 1"
        where Tmax <= Txsnm (precipitaton falls as snow as is added to snow bucket)
@@ -468,8 +470,10 @@ def EtaCalc_snow(mask,kc_list,eto,sb_old,pr,wb_old,Sa,D,p):
     wb=np.where((sbx>=etm) & (wb>Salim),Salim,wb)
     wx=np.where((sbx>=etm) & (wb>Salim),wb-Salim,wx)
     wx=np.where((sbx>=etm) & (wb<=Salim),0,wx) 
+
     return etm, Eta, wb, wx, sb, kc
 
+@dask.delayed
 def EtaCalc_snowmelting(mask,kc_list,eto,sb_old,pr,wb_old,Sa,D,p,Fsnm,tx,tmelt):
     """compute actual evapotranspiration (ETa) for ET regime "class 2"
        where Snow-melt takes place; minor evapotranspiration
@@ -517,6 +521,7 @@ def EtaCalc_snowmelting(mask,kc_list,eto,sb_old,pr,wb_old,Sa,D,p,Fsnm,tx,tmelt):
    
     return etm, Eta, wb, wx, sb, kc
 
+@dask.delayed
 def EtaCalc_cold(mask,kc_list,eto,sb_old,pr,wb_old,Sa,D,p,Fsnm,tx,tmelt):
     """compute actual evapotranspiration (ETa) for ET regime "class 3"
        where there are Biological activities before start of growing period
@@ -557,6 +562,7 @@ def EtaCalc_cold(mask,kc_list,eto,sb_old,pr,wb_old,Sa,D,p,Fsnm,tx,tmelt):
 
     return etm, Eta, wb, wx, sb, kc
 
+@dask.delayed
 def EtaCalc_warm(mask,kc_list,eto,sb_old,pr,wb_old,Sa,D,p,Fsnm,tx,tmelt,istart,iend,idoy):
     """compute actual evapotranspiration (ETa) for ET regime "class 4" during the growing season
 
@@ -602,6 +608,7 @@ def EtaCalc_warm(mask,kc_list,eto,sb_old,pr,wb_old,Sa,D,p,Fsnm,tx,tmelt,istart,i
 
     return etm, Eta, wb, wx, sb, kc
 
+@dask.delayed
 def EtaCalc_warmest(mask,kc_list,eto,sb_old,pr,wb_old,Sa,D,p,Fsnm,tx,tmelt):
     """compute actual evapotranspiration (ETa) for ET regime "class 5" the warmest period
 
@@ -639,7 +646,9 @@ def EtaCalc_warmest(mask,kc_list,eto,sb_old,pr,wb_old,Sa,D,p,Fsnm,tx,tmelt):
 
     Eta=np.where(Eta>etm,etm,Eta)
     
-    return etm, Eta, wb, wx, sb, kc 
+    return etm, Eta, wb, wx, sb, kc
+
+
 
 def EtaCalc(im_mask,Tx,Ta,Pr,Txsnm,Fsnm,Eto,wb_old,sb_old,idoy,istart0,istart1,Sa,D,p,kc_list,lgpt5):
 
@@ -676,105 +685,119 @@ def EtaCalc(im_mask,Tx,Ta,Pr,Txsnm,Fsnm,Eto,wb_old,sb_old,idoy,istart0,istart1,S
     # or an x,y, array of a single time step for time variant quantities
     # outputs x,y, arrays at a single time step for Etm_new,Eta_new,Wb_new,Wx_new,Sb_new,kc_new
     eta_class=Eta_class(im_mask,lgpt5,Ta,Tx,Txsnm)
+    ncats=5 # total number of Eta classes
+
+    # we parallelize here by eta_class (the six different regimes for computing ET)
+    # the computations for eta_class are each a delayed function
+    # we call each function which saves the future computation as an object to a list of tasks
+    # then we call compute on the list of tasks at the end to execute them in parallel 
+    task_list=[]
 
     # compute for snow class
     mask=np.where(eta_class==1,1,np.nan)
-    Etm_new,Eta_new,Wb_new,Wx_new,Sb_new,kc_new=EtaCalc_snow(mask,
-                                                    kc_list,
-                                                    np.where(mask==1,Eto,np.nan),
-                                                    np.where(mask==1,sb_old,np.nan),
-                                                    np.where(mask==1,Pr,np.nan),
-                                                    np.where(mask==1,wb_old,np.nan),
-                                                    Sa,
-                                                    D,
-                                                    np.where(mask==1,p,np.nan))
+    task=EtaCalc_snow(mask,
+                    kc_list,
+                    np.where(mask==1,Eto,np.nan),
+                    np.where(mask==1,sb_old,np.nan),
+                    np.where(mask==1,Pr,np.nan),
+                    np.where(mask==1,wb_old,np.nan),
+                    Sa,
+                    D,
+                    np.where(mask==1,p,np.nan))
+    task_list.append(task) # task list has 1 delayed dask object in it which will compute etm,eta_var,wb,wx,sb,kc
 
     # compute for snow melting class
     mask=np.where(eta_class==2,1,np.nan)
-    etm,eta_var,wb,wx,sb,kc=EtaCalc_snowmelting(mask,
-                                            kc_list,
-                                            np.where(mask==1,Eto,np.nan),
-                                            np.where(mask==1,sb_old,np.nan),
-                                            np.where(mask==1,Pr,np.nan),
-                                            np.where(mask==1,wb_old,np.nan),
-                                            Sa,
-                                            D,
-                                            np.where(mask==1,p,np.nan),
-                                            Fsnm,
-                                            np.where(mask==1,Tx,np.nan),
-                                            Txsnm)                                            
-    Etm_new=np.where(mask==1,etm,Etm_new)
-    Eta_new=np.where(mask==1,eta_var,Eta_new)                                                                                        
-    Wb_new=np.where(mask==1,wb,Wb_new)                                                                                        
-    Wx_new=np.where(mask==1,wx,Wx_new)                                                                                        
-    Sb_new=np.where(mask==1,sb,Sb_new)                                                                                        
-    kc_new=np.where(mask==1,kc,kc_new) 
+    task=EtaCalc_snowmelting(mask,
+                            kc_list,
+                            np.where(mask==1,Eto,np.nan),
+                            np.where(mask==1,sb_old,np.nan),
+                            np.where(mask==1,Pr,np.nan),
+                            np.where(mask==1,wb_old,np.nan),
+                            Sa,
+                            D,
+                            np.where(mask==1,p,np.nan),
+                            Fsnm,
+                            np.where(mask==1,Tx,np.nan),
+                            Txsnm)                                            
+    task_list.append(task) # task list has 2 delayed dask objects in it
 
     # compute for cold class (pre-growing season)
     mask=np.where(eta_class==3,1,np.nan)
-    etm,eta_var,wb,wx,sb,kc=EtaCalc_cold(mask,
-                                        kc_list,
-                                        np.where(mask==1,Eto,np.nan),
-                                        np.where(mask==1,sb_old,np.nan),
-                                        np.where(mask==1,Pr,np.nan),
-                                        np.where(mask==1,wb_old,np.nan),
-                                        Sa,
-                                        D,
-                                        np.where(mask==1,p,np.nan),
-                                        Fsnm,
-                                        np.where(mask==1,Tx,np.nan),
-                                        Txsnm)                                            
-    Etm_new=np.where(mask==1,etm,Etm_new)
-    Eta_new=np.where(mask==1,eta_var,Eta_new)                                                                                        
-    Wb_new=np.where(mask==1,wb,Wb_new)                                                                                        
-    Wx_new=np.where(mask==1,wx,Wx_new)                                                                                        
-    Sb_new=np.where(mask==1,sb,Sb_new)                                                                                        
-    kc_new=np.where(mask==1,kc,kc_new)
+    task=EtaCalc_cold(mask,
+                    kc_list,
+                    np.where(mask==1,Eto,np.nan),
+                    np.where(mask==1,sb_old,np.nan),
+                    np.where(mask==1,Pr,np.nan),
+                    np.where(mask==1,wb_old,np.nan),
+                    Sa,
+                    D,
+                    np.where(mask==1,p,np.nan),
+                    Fsnm,
+                    np.where(mask==1,Tx,np.nan),
+                    Txsnm)                                            
+    task_list.append(task) # task list has 3 delayed dask objects in it
 
     # compute for warm class (growing season)
     mask=np.where(eta_class==4,1,np.nan)
-    etm,eta_var,wb,wx,sb,kc=EtaCalc_warm(mask,
-                                        kc_list,
-                                        np.where(mask==1,Eto,np.nan),
-                                        np.where(mask==1,sb_old,np.nan),
-                                        np.where(mask==1,Pr,np.nan),
-                                        np.where(mask==1,wb_old,np.nan),
-                                        Sa,
-                                        D,
-                                        np.where(mask==1,p,np.nan),
-                                        Fsnm,
-                                        np.where(mask==1,Tx,np.nan),
-                                        Txsnm,
-                                        np.where(mask==1,istart0,np.nan),
-                                        np.where(mask==1,istart1,np.nan),
-                                        idoy)                                          
-    Etm_new=np.where(mask==1,etm,Etm_new)
-    Eta_new=np.where(mask==1,eta_var,Eta_new)                                                                                        
-    Wb_new=np.where(mask==1,wb,Wb_new)                                                                                        
-    Wx_new=np.where(mask==1,wx,Wx_new)                                                                                        
-    Sb_new=np.where(mask==1,sb,Sb_new)                                                                                        
-    kc_new=np.where(mask==1,kc,kc_new)
+    task=EtaCalc_warm(mask,
+                    kc_list,
+                    np.where(mask==1,Eto,np.nan),
+                    np.where(mask==1,sb_old,np.nan),
+                    np.where(mask==1,Pr,np.nan),
+                    np.where(mask==1,wb_old,np.nan),
+                    Sa,
+                    D,
+                    np.where(mask==1,p,np.nan),
+                    Fsnm,
+                    np.where(mask==1,Tx,np.nan),
+                    Txsnm,
+                    np.where(mask==1,istart0,np.nan),
+                    np.where(mask==1,istart1,np.nan),
+                    idoy)                                          
+    task_list.append(task) # task list has 4 delayed dask objects in it
 
     # compute for warmest class
     mask=np.where(eta_class==5,1,np.nan)
-    etm,eta_var,wb,wx,sb,kc=EtaCalc_warmest(mask,
-                                            kc_list,
-                                            np.where(mask==1,Eto,np.nan),
-                                            np.where(mask==1,sb_old,np.nan),
-                                            np.where(mask==1,Pr,np.nan),
-                                            np.where(mask==1,wb_old,np.nan),
-                                            Sa,
-                                            D,
-                                            np.where(mask==1,p,np.nan),
-                                            Fsnm,
-                                            np.where(mask==1,Tx,np.nan),
-                                            Txsnm)                                   
-    Etm_new=np.where(mask==1,etm,Etm_new)
-    Eta_new=np.where(mask==1,eta_var,Eta_new)                                                                                        
-    Wb_new=np.where(mask==1,wb,Wb_new)                                                                                        
-    Wx_new=np.where(mask==1,wx,Wx_new)                                                                                        
-    Sb_new=np.where(mask==1,sb,Sb_new)                                                                                        
-    kc_new=np.where(mask==1,kc,kc_new)    
+    task=EtaCalc_warmest(mask,
+                        kc_list,
+                        np.where(mask==1,Eto,np.nan),
+                        np.where(mask==1,sb_old,np.nan),
+                        np.where(mask==1,Pr,np.nan),
+                        np.where(mask==1,wb_old,np.nan),
+                        Sa,
+                        D,
+                        np.where(mask==1,p,np.nan),
+                        Fsnm,
+                        np.where(mask==1,Tx,np.nan),
+                        Txsnm)                                   
+    task_list.append(task) # task list has 5 delayed dask objects in it, 1 task for each ET function/class
+
+    # now compute everything
+    # result_list is a list of tuples containing arrays: [(etm,eta_var,wb,wx,sb,kc from EtaCalc_snow),(etm,eta_var,wb,wx,sb,kc from EtaCalc_snowmelting),(etm,eta_var,wb,wx,sb,kc from EtaCalc_cold),...]
+    # the tuples are returned in the order the functions were called
+    # to access a single array in the result list we use two sets of brackets
+    # e.g. result_list[1][2] is wb from the EtaCalc_snowmelting function
+    result_list=dask.compute(*task_list) # computing in parallel
+
+    # now combine results for each variable into a single array
+    # initialize
+    Etm_new = np.empty(im_mask.shape)  #KLG
+    Eta_new = np.empty(im_mask.shape)  #KLG
+    Wb_new = np.empty(im_mask.shape)  #KLG
+    Wx_new = np.empty(im_mask.shape)  #KLG
+    Sb_new = np.empty(im_mask.shape)  #KLG
+    kc_new = np.empty(im_mask.shape)  #KLG
+    Etm_new[:],Eta_new[:],Wb_new[:],Wx_new[:],Sb_new[:],kc_new[:]=np.nan,np.nan,np.nan,np.nan,np.nan,np.nan  #KLG
+
+    # combine
+    for i,cat in enumerate(np.arange(ncats)+1):
+        Etm_new=np.where(eta_class==cat,result_list[i][0],Etm_new)
+        Eta_new=np.where(eta_class==cat,result_list[i][1],Eta_new)                                                                                        
+        Wb_new=np.where(eta_class==cat,result_list[i][2],Wb_new)                                                                                        
+        Wx_new=np.where(eta_class==cat,result_list[i][3],Wx_new)                                                                                        
+        Sb_new=np.where(eta_class==cat,result_list[i][4],Sb_new)                                                                                        
+        kc_new=np.where(eta_class==cat,result_list[i][5],kc_new)         
 
     return Etm_new,Eta_new,Wb_new,Wx_new,Sb_new,kc_new 
 

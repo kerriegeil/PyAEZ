@@ -9,9 +9,14 @@ required to run PyAEZ.
 
 import numpy as np
 # from pyaez import UtilitiesCalc, ETOCalc, LGPCalc
-import UtilitiesCalc_v21v as UtilitiesCalc #KLG
-import ETOCalc_v21v as ETOCalc # KLG
-import LGPCalc_v21v as LGPCalc # KLG
+import UtilitiesCalc_v21pv as UtilitiesCalc #KLG
+import ETOCalc_v21pv as ETOCalc # KLG
+import LGPCalc_v21pv as LGPCalc # KLG
+from collections import OrderedDict
+
+import dask.array as da
+import dask
+
 np.seterr(divide='ignore', invalid='ignore') # ignore "divide by zero" or "divide by NaN" warning
 
 # Initiate ClimateRegime Class instance
@@ -169,21 +174,34 @@ class ClimateRegime(object):
         self.P_by_PET_daily = np.nan_to_num(self.totalPrec_daily / self.pet_daily)
         self.set_monthly = False
 
-        # smoothed mean T  #KLG
-        # Adding interpolation to the dataset  #KLG
-        # 5th degree spline fit to smooth in time  #KLG
-        days = np.arange(self.doy_start,self.doy_end+1) # x values  #KLG
-        # replace any nan with zero  #KLG
-        mask3D = np.tile(self.im_mask[:,:,np.newaxis], (1,1,days.shape[0]))  #KLG
-        data=np.where(mask3D==0,0,self.meanT_daily)   #KLG
-        data2D=data.transpose(2,0,1).reshape(days.shape[0],-1) # every column is a set of y values  #KLG
-        del data  #KLG
-        # do the fitting  #KLG
-        quad_spl=np.polynomial.polynomial.polyfit(days,data2D,deg=5)  #KLG
-        interp_daily_temp=np.polynomial.polynomial.polyval(days,quad_spl)  #KLG
-        #reshape  #KLG
-        interp_daily_temp=interp_daily_temp.reshape(mask3D.shape[0],mask3D.shape[1],-1)  #KLG
-        self.interp_daily_temp=interp_daily_temp   #KLG
+        # smoothed daily temperature
+        obj_utilities = UtilitiesCalc.UtilitiesCalc()  #KLG
+
+        if self.set_mask:
+            mask=self.im_mask
+        else:
+            mask=np.ones((self.im_height,self.im_width),dtype='int')
+
+        self.interp_daily_temp=obj_utilities.smoothDailyTemp(self.doy_start,self.doy_end, mask, self.meanT_daily)
+
+        # # smoothed mean T  #KLG
+        # # Adding interpolation to the dataset  #KLG
+        # # 5th degree spline fit to smooth in time  #KLG
+        # days = np.arange(self.doy_start,self.doy_end+1) # x values  #KLG
+        # # replace any nan with zero  #KLG
+        # mask3D = np.tile(self.im_mask[:,:,np.newaxis], (1,1,days.shape[0]))  #KLG
+        # data=np.where(mask3D==0,0,self.meanT_daily)   #KLG
+        # data2D=data.transpose(2,0,1).reshape(days.shape[0],-1) # every column is a set of y values  #KLG
+        # del data  #KLG
+        # # do the fitting  #KLG
+        # quad_spl=np.polynomial.polynomial.polyfit(days,data2D,deg=5)  #KLG
+        # interp_daily_temp=np.polynomial.polynomial.polyval(days,quad_spl)  #KLG
+        # #reshape  #KLG
+        # interp_daily_temp=interp_daily_temp.reshape(mask3D.shape[0],mask3D.shape[1],-1)  #KLG
+        # self.interp_daily_temp=interp_daily_temp   #KLG
+
+        self.chunk3D=(-1,94,-1)
+        self.chunk2D=(-1,94)
 
 
     def getThermalClimate(self):
@@ -194,11 +212,13 @@ class ClimateRegime(object):
         """        
         # Note that currently, this thermal climate is designed only for the northern hemisphere, southern hemisphere is not implemented yet.
 
-        thermal_climate = np.empty((self.im_height,self.im_width),dtype='float32')  #KLG
+
+        thermal_climate = da.empty((self.im_height,self.im_width),dtype='float32',chunks=self.chunk2D)  #KLG
+        # thermal_climate = np.empty((self.im_height,self.im_width),dtype='float32')  #KLG
         thermal_climate[:] = np.nan  #KLG
 
         # converting daily to monthly  #KLG
-        obj_utilities = UtilitiesCalc.UtilitiesCalc()  #KLG
+        obj_utilities = UtilitiesCalc.UtilitiesCalc(self.chunk2D,self.chunk3D)  #KLG
         meanT_monthly_sealevel = obj_utilities.averageDailyToMonthly(self.meanT_daily_sealevel)  #KLG
         meanT_monthly = obj_utilities.averageDailyToMonthly(self.meanT_daily)  #KLG
         P_by_PET_monthly = obj_utilities.averageDailyToMonthly(self.P_by_PET_daily)  #KLG
@@ -335,9 +355,10 @@ class ClimateRegime(object):
         #             thermal_climate[i_row, i_col] = 12
                     
         if self.set_mask:
-            return np.where(self.im_mask, thermal_climate.astype('float32'), np.nan)  #KLG
+            thermal_climate=np.where(self.im_mask, thermal_climate.astype('float32'), np.nan)  #KLG
+            return thermal_climate.compute()
         else:
-            return thermal_climate.astype('float32')  #KLG
+            return thermal_climate.astype('float32').compute()  #KLG
 
     
 
@@ -553,101 +574,97 @@ class ClimateRegime(object):
             2D NumPy: 18 2D arrays [A1-A9, B1-B9] correspond to each Temperature Profile class [days]
         """    
         # list of variable names to compute and output  #KLG
-        var_names = ['A1','A2','A3','A4','A5','A6','A7','A8','A9', \
-                    'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9']  #KLG
-        var_dict=dict.fromkeys(var_names)  #KLG
+        # var_names = ['A1','A2','A3','A4','A5','A6','A7','A8','A9', \
+        #             'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9']  #KLG
+        # var_dict=OrderedDict.fromkeys(var_names)  #KLG
 
-        # # Smoothening the temperature curve
-        # interp_daily_temp = np.zeros((self.im_height, self.im_width, 365))
-        # days = np.arange(1,366)
-        # for i_row in range(self.im_height):
-        #     for i_col in range(self.im_width):
-        #         temp_1D = self.meanT_daily[i_row, i_col, :]
-        #         # Creating quadratic spline fit to smoothen the time series along time dimension
-        #         quad_spl = np.poly1d(np.polyfit(days, temp_1D, 5))
-        #         interp_daily_temp[i_row, i_col, :] = quad_spl(days)
-        
-        # we will use the interpolated temperature time series to decide and count
-        # meanT_daily_add1day = np.concatenate((interp_daily_temp, interp_daily_temp[:,:,0:1]), axis=-1)
-        # meanT_first = meanT_daily_add1day[:,:,:-1]
-        # meanT_diff = meanT_daily_add1day[:,:,1:] - meanT_daily_add1day[:,:,:-1]
+        # a nested ordered dictionary containing info needed to compute for each t profile class
+        tclass_info = OrderedDict({ 'A1': {'tendency':'warming','lim_lo':30,'lim_hi':999},
+                                    'A2':{'tendency':'warming','lim_lo':25,'lim_hi':30},
+                                    'A3':{'tendency':'warming','lim_lo':20,'lim_hi':25},
+                                    'A4':{'tendency':'warming','lim_lo':15,'lim_hi':20},
+                                    'A5':{'tendency':'warming','lim_lo':10,'lim_hi':15},
+                                    'A6':{'tendency':'warming','lim_lo':5,'lim_hi':10},
+                                    'A7':{'tendency':'warming','lim_lo':0,'lim_hi':5},
+                                    'A8':{'tendency':'warming','lim_lo':-5,'lim_hi':0},
+                                    'A9':{'tendency':'warming','lim_lo':-999,'lim_hi':-5},
+                                    'B1':{'tendency':'cooling','lim_lo':30,'lim_hi':999},
+                                    'B2':{'tendency':'cooling','lim_lo':25,'lim_hi':30},
+                                    'B3':{'tendency':'cooling','lim_lo':20,'lim_hi':25},
+                                    'B4':{'tendency':'cooling','lim_lo':15,'lim_hi':20},
+                                    'B5':{'tendency':'cooling','lim_lo':10,'lim_hi':15},
+                                    'B6':{'tendency':'cooling','lim_lo':5,'lim_hi':10},
+                                    'B7':{'tendency':'cooling','lim_lo':0,'lim_hi':5},
+                                    'B8':{'tendency':'cooling','lim_lo':-5,'lim_hi':0},
+                                    'B9':{'tendency':'cooling','lim_lo':-999,'lim_hi':-5} })
+
         meanT_first=self.interp_daily_temp  #KLG
         meanT_diff=np.diff(self.interp_daily_temp,n=1,axis=2,append=self.interp_daily_temp[:,:,0:1])   #KLG
 
-        # A9 = np.sum( np.logical_and(meanT_diff>0, meanT_first<-5), axis=2 )
-        # A8 = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=-5, meanT_first<0)), axis=2 )
-        # A7 = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=0, meanT_first<5)), axis=2 )
-        # A6 = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=5, meanT_first<10)), axis=2 )
-        # A5 = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=10, meanT_first<15)), axis=2 )
-        # A4 = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=15, meanT_first<20)), axis=2 )
-        # A3 = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=20, meanT_first<25)), axis=2 )
-        # A2 = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=25, meanT_first<30)), axis=2 )
-        # A1 = np.sum( np.logical_and(meanT_diff>0, meanT_first>=30), axis=2 )
+        # var_dict['A9'] = np.sum( np.logical_and(meanT_diff>0, meanT_first<-5), axis=2 )  #KLG
+        # var_dict['A8'] = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=-5, meanT_first<0)), axis=2 )  #KLG
+        # var_dict['A7'] = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=0, meanT_first<5)), axis=2 )  #KLG
+        # var_dict['A6'] = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=5, meanT_first<10)), axis=2 )  #KLG
+        # var_dict['A5'] = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=10, meanT_first<15)), axis=2 )  #KLG
+        # var_dict['A4'] = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=15, meanT_first<20)), axis=2 )  #KLG
+        # var_dict['A3'] = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=20, meanT_first<25)), axis=2 )  #KLG
+        # var_dict['A2'] = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=25, meanT_first<30)), axis=2 )  #KLG
+        # var_dict['A1'] = np.sum( np.logical_and(meanT_diff>0, meanT_first>=30), axis=2 )  #KLG
 
-        # B9 = np.sum( np.logical_and(meanT_diff<0, meanT_first<-5), axis=2 )
-        # B8 = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=-5, meanT_first<0)), axis=2 )
-        # B7 = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=0, meanT_first<5)), axis=2 )
-        # B6 = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=5, meanT_first<10)), axis=2 )
-        # B5 = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=10, meanT_first<15)), axis=2 )
-        # B4 = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=15, meanT_first<20)), axis=2 )
-        # B3 = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=20, meanT_first<25)), axis=2 )
-        # B2 = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=25, meanT_first<30)), axis=2 )
-        # B1 = np.sum( np.logical_and(meanT_diff<0, meanT_first>=30), axis=2 )
+        # var_dict['B9'] = np.sum( np.logical_and(meanT_diff<0, meanT_first<-5), axis=2 )  #KLG
+        # var_dict['B8'] = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=-5, meanT_first<0)), axis=2 )  #KLG
+        # var_dict['B7'] = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=0, meanT_first<5)), axis=2 )  #KLG
+        # var_dict['B6'] = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=5, meanT_first<10)), axis=2 )  #KLG
+        # var_dict['B5'] = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=10, meanT_first<15)), axis=2 )  #KLG
+        # var_dict['B4'] = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=15, meanT_first<20)), axis=2 )  #KLG
+        # var_dict['B3'] = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=20, meanT_first<25)), axis=2 )  #KLG
+        # var_dict['B2'] = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=25, meanT_first<30)), axis=2 )   #KLG       
+        # var_dict['B1'] = np.sum( np.logical_and(meanT_diff<0, meanT_first>=30), axis=2 )  #KLG
 
-        var_dict['A9'] = np.sum( np.logical_and(meanT_diff>0, meanT_first<-5), axis=2 )  #KLG
-        var_dict['A8'] = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=-5, meanT_first<0)), axis=2 )  #KLG
-        var_dict['A7'] = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=0, meanT_first<5)), axis=2 )  #KLG
-        var_dict['A6'] = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=5, meanT_first<10)), axis=2 )  #KLG
-        var_dict['A5'] = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=10, meanT_first<15)), axis=2 )  #KLG
-        var_dict['A4'] = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=15, meanT_first<20)), axis=2 )  #KLG
-        var_dict['A3'] = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=20, meanT_first<25)), axis=2 )  #KLG
-        var_dict['A2'] = np.sum( np.logical_and(meanT_diff>0, np.logical_and(meanT_first>=25, meanT_first<30)), axis=2 )  #KLG
-        var_dict['A1'] = np.sum( np.logical_and(meanT_diff>0, meanT_first>=30), axis=2 )  #KLG
+        # delay the input data so it's copied once instead of at each call of the function
+        meanT_diff=dask.delayed(meanT_diff)
+        meanT_first=dask.delayed(meanT_first)
 
-        var_dict['B9'] = np.sum( np.logical_and(meanT_diff<0, meanT_first<-5), axis=2 )  #KLG
-        var_dict['B8'] = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=-5, meanT_first<0)), axis=2 )  #KLG
-        var_dict['B7'] = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=0, meanT_first<5)), axis=2 )  #KLG
-        var_dict['B6'] = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=5, meanT_first<10)), axis=2 )  #KLG
-        var_dict['B5'] = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=10, meanT_first<15)), axis=2 )  #KLG
-        var_dict['B4'] = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=15, meanT_first<20)), axis=2 )  #KLG
-        var_dict['B3'] = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=20, meanT_first<25)), axis=2 )  #KLG
-        var_dict['B2'] = np.sum( np.logical_and(meanT_diff<0, np.logical_and(meanT_first>=25, meanT_first<30)), axis=2 )   #KLG       
-        var_dict['B1'] = np.sum( np.logical_and(meanT_diff<0, meanT_first>=30), axis=2 )  #KLG
+        # create a mask of all 1's if a mask doesn't already exist
+        if self.set_mask:
+            mask=self.im_mask
+        else:
+            mask=np.ones((self.im_height,self.im_width),dtype='int')
+        mask=dask.delayed(mask)
 
-        # if self.set_mask:
-        #     return [np.ma.masked_where(self.im_mask == 0, A1),
-        #             np.ma.masked_where(self.im_mask == 0, A2),
-        #             np.ma.masked_where(self.im_mask == 0, A3),
-        #             np.ma.masked_where(self.im_mask == 0, A4),
-        #             np.ma.masked_where(self.im_mask == 0, A5),
-        #             np.ma.masked_where(self.im_mask == 0, A6),
-        #             np.ma.masked_where(self.im_mask == 0, A7),
-        #             np.ma.masked_where(self.im_mask == 0, A8),
-        #             np.ma.masked_where(self.im_mask == 0, A9),
-        #             np.ma.masked_where(self.im_mask == 0, B1),
-        #             np.ma.masked_where(self.im_mask == 0, B2),
-        #             np.ma.masked_where(self.im_mask == 0, B3),
-        #             np.ma.masked_where(self.im_mask == 0, B4),
-        #             np.ma.masked_where(self.im_mask == 0, B5),
-        #             np.ma.masked_where(self.im_mask == 0, B6),
-        #             np.ma.masked_where(self.im_mask == 0, B7),
-        #             np.ma.masked_where(self.im_mask == 0, B8),
-        #             np.ma.masked_where(self.im_mask == 0, B9)]
-        # else:
-        #     return [A1, A2, A3, A4, A5, A6, A7, A8, A9, B1, B2, B3, B4, B5, B6, B7, B8, B9]
+        # put the computations inside a delayed function
+        @dask.delayed
+        def sum_ndays_per_tprof_class(diff,meanT,tendency,lim_lo,lim_hi,mask):
+            if tendency=='warming':
+                tclass_ndays = np.sum( (diff>0)&(meanT>=lim_lo)&(meanT<lim_hi), axis=2 ) 
+            if tendency=='cooling':
+                tclass_ndays = np.sum( (diff<0)&(meanT>=lim_lo)&(meanT<lim_hi), axis=2 )
+
+            tclass_ndays=np.where(mask, tclass_ndays.astype('float32'), np.nan)
+            return tclass_ndays
+
+        # in a regular non-delayed loop, call delayed function and compile list of future compute tasks
+        task_list=[]                        
+        for class_inputs in tclass_info.values():
+            task=sum_ndays_per_tprof_class(meanT_diff,meanT_first,class_inputs['tendency'],class_inputs['lim_lo'],class_inputs['lim_hi'],mask)
+            task_list.append(task)
+        
+        # compute tasks in parallel
+        # this returns a list of arrays in the same order as tclass_info
+        data_out=dask.compute(*task_list)
 
         # apply the mask  #KLG
-        if self.set_mask:  #KLG
-            for var in var_names:  #KLG
-                var_dict[var]=np.ma.masked_where(self.im_mask == 0, var_dict[var])  #KLG
+        # if self.set_mask:  #KLG
+        #     for var in var_names:  #KLG
+        #         var_dict[var]=np.ma.masked_where(self.im_mask == 0, var_dict[var])  #KLG
 
-        # assemble the list of return variables  #KLG
-        # the order of the variables in the returned list is the same as in var_names  #KLG
-        data_out=[]  #KLG
-        for var in var_names:  #KLG
-            data_out.append(var_dict[var].astype('float32'))  #KLG
+        # # assemble the list of return variables  #KLG
+        # # the order of the variables in the returned list is the same as in var_names  #KLG
+        # data_out=[]  #KLG
+        # for var in var_names:  #KLG
+        #     data_out.append(var_dict[var].astype('float32'))  #KLG
         
-        return data_out   #KLG                       
+        return data_out                 
 
 
     def getLGP(self, Sa=100., D=1.):
@@ -744,6 +761,7 @@ class ClimateRegime(object):
             mask=np.ones((self.im_height,self.im_width),dtype='int')
         
         for doy in range(self.doy_start-1, self.doy_end):  #KLG
+            # result = LGPCalc.EtaCalc(
             Eta_new, Etm_new, Wb_new, Wx_new, Sb_new, kc_new = LGPCalc.EtaCalc(
                                     mask,
                                     np.float64(Tx365[:,:,doy]), 
@@ -762,6 +780,15 @@ class ClimateRegime(object):
                                     p[:,:,doy], 
                                     kc_list, 
                                     self.lgpt5)  #KLG
+            # print(len(result))
+            # print(result[0].shape)
+
+            # self.Eta365[:,:,doy]=Eta_new  #KLG
+            # self.Etm365[:,:,doy]=Etm_new  #KLG
+            # self.Wb365[:,:,doy]=Wb_new  #KLG
+            # self.Wx365[:,:,doy]=Wx_new  #KLG
+            # self.Sb365[:,:,doy]=Sb_new  #KLG
+            # self.kc365[:,:,doy]=kc_new  #KLG
 
             self.Eta365[:,:,doy]=Eta_new  #KLG
             self.Etm365[:,:,doy]=Etm_new  #KLG
@@ -770,8 +797,8 @@ class ClimateRegime(object):
             self.Sb365[:,:,doy]=Sb_new  #KLG
             self.kc365[:,:,doy]=kc_new  #KLG
 
-            Wb_old=Wb_new  #KLG
-            Sb_old=Sb_new  #KLG
+            Wb_old=Wb_new.copy()  #KLG
+            Sb_old=Sb_new.copy()  #KLG
 
         self.Eta365=np.where(self.Eta365<0,0,self.Eta365)  #KLG
         #============================================

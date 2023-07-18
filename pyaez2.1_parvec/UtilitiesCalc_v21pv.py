@@ -11,8 +11,22 @@ try:
     import gdal
 except:
     from osgeo import gdal
+import dask.array as da
+import dask
+from collections import OrderedDict
 
 class UtilitiesCalc(object):
+    def __init__(self, chunk2D=None, chunk3D=None):
+        """Initiate a Utilities Class instance
+
+        Args:
+            chunk2D (len 2 tuple of int): chunk size for 2D arrays
+            chunk2D (len 3 tuple of int): chunk size for 3D arrays
+        """        
+        if chunk2D and chunk3D:
+            self.chunk2D = chunk2D
+            self.chunk3D = chunk3D
+   
 
     def interpMonthlyToDaily(self, monthly_vector, cycle_begin, cycle_end, no_minus_values=False):
         """Interpolate monthly climate data to daily climate data
@@ -39,14 +53,15 @@ class UtilitiesCalc(object):
 
         return daily_vector
 
-    def averageDailyToMonthly(self, daily_vector):
+    def averageDailyToMonthly(self, daily_arr):
+    # def averageDailyToMonthly(self, daily_vector):
         """Aggregating daily data into monthly data
 
         Args:
-            daily_vector (1D NumPy): daily data array
+            daily_arr (3D NumPy): daily data array of dims (ny,nx,365)
 
         Returns:
-            1D NumPy: Monthly data array
+            3D NumPy: Monthly data array of dims (ny,nx,12)
         """        
         # monthly_vector = np.zeros(12)
 
@@ -63,22 +78,60 @@ class UtilitiesCalc(object):
         # monthly_vector[10] = np.sum(daily_vector[304:334])/30
         # monthly_vector[11] = np.sum(daily_vector[334:])/31
 
-        monthly_vector = np.zeros((daily_vector.shape[0],daily_vector.shape[1],12))
+        # delay the input data so it's copied once instead of at each call of the function
+        daily_arr=dask.delayed(daily_arr)
 
-        monthly_vector[:,:,0] = daily_vector[:,:,:31].sum(axis=2)/31
-        monthly_vector[:,:,1] = daily_vector[:,:,31:59].sum(axis=2)/28
-        monthly_vector[:,:,2] = daily_vector[:,:,59:90].sum(axis=2)/31
-        monthly_vector[:,:,3] = daily_vector[:,:,90:120].sum(axis=2)/30
-        monthly_vector[:,:,4] = daily_vector[:,:,120:151].sum(axis=2)/31
-        monthly_vector[:,:,5] = daily_vector[:,:,151:181].sum(axis=2)/30
-        monthly_vector[:,:,6] = daily_vector[:,:,181:212].sum(axis=2)/31
-        monthly_vector[:,:,7] = daily_vector[:,:,212:243].sum(axis=2)/31
-        monthly_vector[:,:,8] = daily_vector[:,:,243:273].sum(axis=2)/30
-        monthly_vector[:,:,9] = daily_vector[:,:,273:304].sum(axis=2)/31
-        monthly_vector[:,:,10] = daily_vector[:,:,304:334].sum(axis=2)/30
-        monthly_vector[:,:,11] = daily_vector[:,:,334:].sum(axis=2)/31            
+        # a nested ordered dictionary containing info for each month
+        month_info = OrderedDict({ 'Jan': {'ndays':31,'lim_lo':0,'lim_hi':31},
+                            'Feb':{'ndays':28,'lim_lo':31,'lim_hi':59},
+                            'Mar':{'ndays':31,'lim_lo':59,'lim_hi':90},
+                            'Apr':{'ndays':30,'lim_lo':90,'lim_hi':120},
+                            'May':{'ndays':31,'lim_lo':120,'lim_hi':151},
+                            'Jun':{'ndays':30,'lim_lo':151,'lim_hi':181},
+                            'Jul':{'ndays':31,'lim_lo':181,'lim_hi':212},
+                            'Aug':{'ndays':31,'lim_lo':212,'lim_hi':243},
+                            'Sep':{'ndays':30,'lim_lo':243,'lim_hi':273},
+                            'Oct':{'ndays':31,'lim_lo':273,'lim_hi':304},
+                            'Nov':{'ndays':30,'lim_lo':304,'lim_hi':334},
+                            'Dec':{'ndays':31,'lim_lo':334,'lim_hi':365} })
 
-        return monthly_vector
+        # put the computations inside a delayed function
+        @dask.delayed
+        def monthly_aggregate(daily,ndays,lim_lo,lim_hi):
+            monthly=daily[:,:,lim_lo:lim_hi].sum(axis=2)/ndays
+            return monthly
+
+        # in a regular non-delayed loop, call delayed function and compile list of future compute tasks
+        task_list=[]                        
+        for month_inputs in month_info.values():
+            task=monthly_aggregate(daily_arr,month_inputs['ndays'],month_inputs['lim_lo'],month_inputs['lim_hi'])
+            task_list.append(task)
+
+        # compute tasks in parallel
+        # this returns a list of arrays in the same order as month_info
+        data_list=dask.compute(*task_list)
+
+        # stack the results along a 3rd dimension (ny,nx,12)
+        monthly_arr=np.stack(data_list,axis=-1,dtype='float32')        
+
+        # monthly_vector = da.zeros((daily_vector.shape[0],daily_vector.shape[1],12),chunks=self.chunk3D)
+        # monthly_vector = np.zeros((daily_vector.shape[0],daily_vector.shape[1],12))
+
+        # monthly_vector[:,:,0] = daily_vector[:,:,:31].sum(axis=2)/31
+        # monthly_vector[:,:,1] = daily_vector[:,:,31:59].sum(axis=2)/28
+        # monthly_vector[:,:,2] = daily_vector[:,:,59:90].sum(axis=2)/31
+        # monthly_vector[:,:,3] = daily_vector[:,:,90:120].sum(axis=2)/30
+        # monthly_vector[:,:,4] = daily_vector[:,:,120:151].sum(axis=2)/31
+        # monthly_vector[:,:,5] = daily_vector[:,:,151:181].sum(axis=2)/30
+        # monthly_vector[:,:,6] = daily_vector[:,:,181:212].sum(axis=2)/31
+        # monthly_vector[:,:,7] = daily_vector[:,:,212:243].sum(axis=2)/31
+        # monthly_vector[:,:,8] = daily_vector[:,:,243:273].sum(axis=2)/30
+        # monthly_vector[:,:,9] = daily_vector[:,:,273:304].sum(axis=2)/31
+        # monthly_vector[:,:,10] = daily_vector[:,:,304:334].sum(axis=2)/30
+        # monthly_vector[:,:,11] = daily_vector[:,:,334:].sum(axis=2)/31            
+
+        return monthly_arr
+        # return monthly_vector.compute()
 
     def generateLatitudeMap(self, lat_min, lat_max, location, im_height, im_width):  #KLG
     # def generateLatitudeMap(self, lat_min, lat_max, im_height, im_width):  
@@ -193,3 +246,37 @@ class UtilitiesCalc(object):
         """        
         # this function converts wind speed from a particular altitude to wind speed at 2m altitude. wind_speed can be a numpy array (can be 1D, 2D or 3D)
         return wind_speed * (4.87/np.log(67.8*altitude-5.42))
+
+
+    def smoothDailyTemp(self, day_start, day_end, mask, daily_T):  #KLG
+        """create smoothed daily temperature curve using 5th degree spline 
+
+        Args:
+            day_start (scalar): first day of the data in Julian day 
+            day_end (scalar): last day of the data in Julian day 
+            mask (2D integer array): administrative mask of 0's and 1's, if user doesn't create this it comes in as all 1's
+            daily_T (3D array): daily temperature
+
+        Returns:
+            3D NumPy array: 5th degree spline smoothed temperature
+        """          
+
+        days = np.arange(day_start,day_end+1) # x values  #KLG
+
+        # replace any nan (i.e. if there is a mask) in the data with zero  #KLG
+        mask3D = np.tile(mask[:,:,np.newaxis], (1,1,days.shape[0]))  #KLG
+        data=np.where(mask3D==0,0,daily_T)   #KLG
+        data2D=data.transpose(2,0,1).reshape(days.shape[0],-1) # every column is a set of y values  #KLG
+        del data  #KLG
+
+        # do the spline fitting  #KLG
+        quad_spl=np.polynomial.polynomial.polyfit(days,data2D,deg=5)  #KLG
+        interp_daily_temp=np.polynomial.polynomial.polyval(days,quad_spl)  #KLG
+
+        #reshape  #KLG
+        interp_daily_temp=interp_daily_temp.reshape(mask3D.shape[0],mask3D.shape[1],-1)  #KLG
+        interp_daily_temp=np.where(mask3D==0,np.nan,interp_daily_temp)
+        
+        return interp_daily_temp.astype('float32')   #KLG
+
+
