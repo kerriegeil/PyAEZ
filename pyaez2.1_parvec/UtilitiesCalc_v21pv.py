@@ -16,17 +16,15 @@ import dask
 from collections import OrderedDict
 
 class UtilitiesCalc(object):
-    def __init__(self, chunk2D=None, chunk3D=None):
+    def __init__(self,chunk2D=None,chunk3D=None):
         """Initiate a Utilities Class instance
 
         Args:
             chunk2D (len 2 tuple of int): chunk size for 2D arrays
             chunk2D (len 3 tuple of int): chunk size for 3D arrays
         """        
-        if chunk2D and chunk3D:
-            self.chunk2D = chunk2D
-            self.chunk3D = chunk3D
-   
+        self.chunk2D = chunk2D
+        self.chunk3D = chunk3D  
 
     def interpMonthlyToDaily(self, monthly_vector, cycle_begin, cycle_end, no_minus_values=False):
         """Interpolate monthly climate data to daily climate data
@@ -133,7 +131,7 @@ class UtilitiesCalc(object):
         return monthly_arr
         # return monthly_vector.compute()
 
-    def generateLatitudeMap(self, lat_min, lat_max, location, im_height, im_width):  #KLG
+    def generateLatitudeMap(self, lat_min, lat_max, location, im_height, im_width, chunk2D):  #KLG
     # def generateLatitudeMap(self, lat_min, lat_max, im_height, im_width):  
     # def generateLatitudeMap(self, lats, location):  #KLG
 
@@ -154,21 +152,31 @@ class UtilitiesCalc(object):
         # [X_map,Y_map] = np.meshgrid(lon_lim,lat_lim)  
         # lat_map = np.flipud(Y_map) 
 
-        # Generate a 2D array of latitudes at pixel centers  #KLG
-        # For lat_min, lat_max values given at pixel centers  #KLG
-        if location:
-            lat_vals=np.linspace(lat_min, lat_max, im_height).astype('float32')  #KLG
-            lat_map=np.tile(lat_vals[:,np.newaxis],(1,im_width))  #KLG
-        # For lat_min, lat_max values given at exterior pixel edges  #KLG
-        if ~location:
-            lat_step=(lat_max-lat_min)/im_height  #KLG
-            lat_vals = np.linspace(lat_min+lat_step/2, lat_max-lat_step/2, im_height)  #KLG
-            lat_map=np.tile(lat_vals[:,np.newaxis],(1,im_width))  #KLG
+        # Generate a 2D array of latitude  #KLG
+        # for parallel computing
+        if chunk2D:
+            # For lat_min, lat_max values given at pixel centers  #KLG
+            if location:
+                lat_vals=da.linspace(lat_min, lat_max, im_height).astype('float32')  #KLG
+                lat_map=da.tile(lat_vals[:,np.newaxis],(1,im_width)).rechunk(chunks=chunk2D)  #KLG            
+            # For lat_min, lat_max values given at exterior pixel edges  #KLG
+            if ~location:
+                lat_step=(lat_max-lat_min)/im_height  #KLG
+                lat_vals = da.linspace(lat_min+lat_step/2, lat_max-lat_step/2, im_height)  #KLG
+                lat_map=da.tile(lat_vals[:,np.newaxis],(1,im_width)).rechunk(chunks=chunk2D)  #KLG     
+        # for serial computing
+        else:     
+            if location:
+                lat_vals=np.linspace(lat_min, lat_max, im_height).astype('float32')  #KLG
+                lat_map=np.tile(lat_vals[:,np.newaxis],(1,im_width))  #KLG
+            if ~location:
+                lat_step=(lat_max-lat_min)/im_height  #KLG
+                lat_vals = np.linspace(lat_min+lat_step/2, lat_max-lat_step/2, im_height)  #KLG
+                lat_map=np.tile(lat_vals[:,np.newaxis],(1,im_width))  #KLG                
 
         # precision issues can arise from above, why not just take a 1D lat array of pixel centers as an input  #KLG
         # instead of recreating them with linspace. Then, use below to make the 2D array  #KLG
         # lat_map=np.tile(lats[:,np.newaxis],(1,im_width))  #KLG
-
         return lat_map
 
     def classifyFinalYield(self, est_yield):
@@ -248,7 +256,7 @@ class UtilitiesCalc(object):
         return wind_speed * (4.87/np.log(67.8*altitude-5.42))
 
 
-    def smoothDailyTemp(self, day_start, day_end, mask, daily_T):  #KLG
+    def smoothDailyTemp(self, day_start, day_end, mask, daily_T, chunk3D):  #KLG
         """create smoothed daily temperature curve using 5th degree spline 
 
         Args:
@@ -261,22 +269,63 @@ class UtilitiesCalc(object):
             3D NumPy array: 5th degree spline smoothed temperature
         """          
 
-        days = np.arange(day_start,day_end+1) # x values  #KLG
+        if chunk3D:
+            self.chunk3D=chunk3D
+            self.parallel=True
 
-        # replace any nan (i.e. if there is a mask) in the data with zero  #KLG
-        mask3D = np.tile(mask[:,:,np.newaxis], (1,1,days.shape[0]))  #KLG
-        data=np.where(mask3D==0,0,daily_T)   #KLG
-        data2D=data.transpose(2,0,1).reshape(days.shape[0],-1) # every column is a set of y values  #KLG
-        del data  #KLG
+        if self.parallel:
+            # spline fitting
+            def polyfit_polyval(x,y,deg):
+                coefs=np.polynomial.polynomial.polyfit(x,y,deg=deg)         
+                spline=np.polynomial.polynomial.polyval(x,coefs) 
+                return spline.astype('float32') 
 
-        # do the spline fitting  #KLG
-        quad_spl=np.polynomial.polynomial.polyfit(days,data2D,deg=5)  #KLG
-        interp_daily_temp=np.polynomial.polynomial.polyval(days,quad_spl)  #KLG
+            deg=5  # polynomial degree for spline fitting
+            days = np.arange(day_start,day_end+1) # x values  #KLG
 
-        #reshape  #KLG
-        interp_daily_temp=interp_daily_temp.reshape(mask3D.shape[0],mask3D.shape[1],-1)  #KLG
-        interp_daily_temp=np.where(mask3D==0,np.nan,interp_daily_temp)
+            # replace any nan in the data with zero (nans may be present under a mask) #KLG
+            mask3D = da.tile(mask[:,:,np.newaxis], (1,1,days.shape[0])).rechunk(chunks=self.chunk3D)  #KLG
+            data=da.where(mask3D==0,0,daily_T)   #KLG
+
+            # collapse lat and lon because polyfit and polyval only work on data up to 2 dimensions
+            data2D=data.transpose(2,0,1).reshape(days.shape[0],-1).rechunk({0:-1,1:'auto'})
+
+            # delay data so it's only passed to computations once
+            days=dask.delayed(days)
+            delayed_chunks=data2D.to_delayed()
+            
+            task_list = [dask.delayed(polyfit_polyval)(days,dchunk,deg) for dchunk in delayed_chunks[0,:]]
+            results_list=dask.compute(*task_list)
+
+            interp_daily_temp=np.concatenate(results_list).reshape(mask3D.shape[0],mask3D.shape[1],-1)  #KLG
+
+        else:
+            days = np.arange(day_start,day_end+1) # x values  #KLG
+
+            # replace any nan (i.e. if there is a mask) in the data with zero  #KLG
+            mask3D = np.tile(mask[:,:,np.newaxis], (1,1,days.shape[0]))  #KLG
+            data=np.where(mask3D==0,0,daily_T)   #KLG
+            data2D=data.transpose(2,0,1).reshape(days.shape[0],-1) # every column is a set of y values  #KLG
+            del data  #KLG
+
+            # do the spline fitting  #KLG
+            quad_spl=np.polynomial.polynomial.polyfit(days,data2D,deg=5)  #KLG
+            interp_daily_temp=np.polynomial.polynomial.polyval(days,quad_spl)  #KLG
+
+            #reshape  #KLG
+            interp_daily_temp=interp_daily_temp.reshape(mask3D.shape[0],mask3D.shape[1],-1)  #KLG
+            interp_daily_temp=np.where(mask3D==0,np.nan,interp_daily_temp)
         
         return interp_daily_temp.astype('float32')   #KLG
 
+    def setChunks(self,nchunks,nlons):
+
+        # how many longitudes per chunk
+        chunk_nlons=int(da.ceil(nlons/nchunks))
+
+        # dimensions of a single chunk for 3D and 2D arrays, -1 means all latitudes and all times
+        chunk3D=(-1,chunk_nlons,-1)
+        chunk2D=(-1,chunk_nlons)
+
+        return chunk2D, chunk3D
 

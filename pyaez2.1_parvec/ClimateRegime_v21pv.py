@@ -21,6 +21,21 @@ np.seterr(divide='ignore', invalid='ignore') # ignore "divide by zero" or "divid
 
 # Initiate ClimateRegime Class instance
 class ClimateRegime(object):
+    def setParallel(self,var3D,parallel=False,nchunks=238):
+        if parallel:
+            self.parallel=True
+
+            # we parallelize by chunking longitudes
+            self.chunk2D,self.chunk3D=UtilitiesCalc.UtilitiesCalc().setChunks(nchunks,var3D.shape[1])
+            self.chunksizeMB=var3D.nbytes/1E6/nchunks   # allow user to see the chunksize in MB   
+            self.nchunks=nchunks        
+        else:
+            self.parallel=False
+            self.chunk3D=None
+            self.chunk2D=None
+            self.chunksizeMD=None
+            self.nchunks=None
+        
     def setLocationTerrainData(self, lat_min, lat_max, location, elevation):  #KLG
     # def setLocationTerrainData(self, lat_min, lat_max, elevation): 
     # def setLocationTerrainData(self, lats, elevation):  #option to take all lats as an input #KLG
@@ -38,7 +53,7 @@ class ClimateRegime(object):
         self.im_height = elevation.shape[0]
         self.im_width = elevation.shape[1]
         # self.latitude = UtilitiesCalc.UtilitiesCalc().generateLatitudeMap(lat_min, lat_max, self.im_height, self.im_width) 
-        self.latitude = UtilitiesCalc.UtilitiesCalc().generateLatitudeMap(lat_min, lat_max, location, self.im_height, self.im_width)  #KLG
+        self.latitude = UtilitiesCalc.UtilitiesCalc().generateLatitudeMap(lat_min, lat_max, location, self.im_height, self.im_width,self.chunk2D)  #KLG
         # self.latitude = UtilitiesCalc.UtilitiesCalc().generateLatitudeMap(lats, location)  #option to take all lats as an input  #KLG
         
     
@@ -138,9 +153,7 @@ class ClimateRegime(object):
         self.maxT_daily = max_temp
         self.minT_daily = min_temp
         self.totalPrec_daily = precipitation  #KLG
-        del max_temp, min_temp, precipitation  #KLG
-
-        self.meanT_daily = 0.5*(self.minT_daily+self.maxT_daily)  #KLG
+        # del max_temp, min_temp, precipitation  #KLG
 
         # exchanging these loops for vectorization #KLG
         # for i_row in range(self.im_height):  
@@ -163,11 +176,13 @@ class ClimateRegime(object):
         obj_eto = ETOCalc.ETOCalc(self.doy_start, self.doy_end, self.latitude, self.elevation)  #KLG
         shortrad_daily_MJm2day = (short_rad*3600.*24.)/1000000. # convert w/m2 to MJ/m2/day  #KLG
         obj_eto.setClimateData(self.minT_daily, self.maxT_daily, wind_speed, shortrad_daily_MJm2day, rel_humidity)  #KLG
+        # del rel_humidity,short_rad,wind_speed,shortrad_daily_MJm2day  #KLG
         self.pet_daily= obj_eto.calculateETO()   #KLG
-        del rel_humidity,short_rad,wind_speed,shortrad_daily_MJm2day  #KLG
+        # del obj_eto
 
         # sea level temperature
         # self.meanT_daily_sealevel = self.meanT_daily + np.tile(np.reshape(self.elevation/100*0.55, (self.im_height,self.im_width,1)), (1,1,365))
+        self.meanT_daily = 0.5*(self.minT_daily+self.maxT_daily)  #KLG
         self.meanT_daily_sealevel = self.meanT_daily + np.expand_dims(self.elevation/100*0.55,axis=2) # automatic broadcasting #KLG        
 
         # P over PET ratio (to eliminate nan in the result, nan is replaced with zero)
@@ -175,14 +190,14 @@ class ClimateRegime(object):
         self.set_monthly = False
 
         # smoothed daily temperature
-        obj_utilities = UtilitiesCalc.UtilitiesCalc()  #KLG
+        obj_utilities = UtilitiesCalc.UtilitiesCalc(self.chunk2D,self.chunk3D)  #KLG
 
         if self.set_mask:
             mask=self.im_mask
         else:
             mask=np.ones((self.im_height,self.im_width),dtype='int')
 
-        self.interp_daily_temp=obj_utilities.smoothDailyTemp(self.doy_start,self.doy_end, mask, self.meanT_daily)
+        self.interp_daily_temp=obj_utilities.smoothDailyTemp(self.doy_start,self.doy_end, mask, self.meanT_daily, self.chunk3D)
 
         # # smoothed mean T  #KLG
         # # Adding interpolation to the dataset  #KLG
@@ -200,8 +215,8 @@ class ClimateRegime(object):
         # interp_daily_temp=interp_daily_temp.reshape(mask3D.shape[0],mask3D.shape[1],-1)  #KLG
         # self.interp_daily_temp=interp_daily_temp   #KLG
 
-        self.chunk3D=(-1,94,-1)
-        self.chunk2D=(-1,94)
+        # self.chunk3D=(-1,94,-1)
+        # self.chunk2D=(-1,94)
 
 
     def getThermalClimate(self):
@@ -1466,7 +1481,8 @@ class ClimateRegime(object):
     according to Gunther's agreement and the documentation.
     """
          
-    def getMultiCroppingZones(self, t_climate, lgp, lgp_t5, lgp_t10, ts_t10, ts_t0):
+    def getMultiCroppingZones(self, t_climate, lgp, lgp_t5, lgp_t10, ts_t0, ts_t10):
+    # def getMultiCroppingZones(self, t_climate, lgp, lgp_t5, lgp_t10, ts_t10, ts_t0):
         """
         This function refers to the assessment of multiple cropping potential
         across the area through matching both growth cycle and temperature
