@@ -14,6 +14,7 @@ except:
 import dask.array as da
 import dask
 from collections import OrderedDict
+import psutil
 
 class UtilitiesCalc(object):
     def __init__(self,chunk2D=None,chunk3D=None):
@@ -76,57 +77,58 @@ class UtilitiesCalc(object):
         # monthly_vector[10] = np.sum(daily_vector[304:334])/30
         # monthly_vector[11] = np.sum(daily_vector[334:])/31
 
-        # delay the input data so it's copied once instead of at each call of the function
-        daily_arr=dask.delayed(daily_arr)
+        if self.chunk3D:
+            # delay the input data so it's copied once instead of at each call of the function
+            daily_arr=dask.delayed(daily_arr)
 
-        # a nested ordered dictionary containing info for each month
-        month_info = OrderedDict({ 'Jan': {'ndays':31,'lim_lo':0,'lim_hi':31},
-                            'Feb':{'ndays':28,'lim_lo':31,'lim_hi':59},
-                            'Mar':{'ndays':31,'lim_lo':59,'lim_hi':90},
-                            'Apr':{'ndays':30,'lim_lo':90,'lim_hi':120},
-                            'May':{'ndays':31,'lim_lo':120,'lim_hi':151},
-                            'Jun':{'ndays':30,'lim_lo':151,'lim_hi':181},
-                            'Jul':{'ndays':31,'lim_lo':181,'lim_hi':212},
-                            'Aug':{'ndays':31,'lim_lo':212,'lim_hi':243},
-                            'Sep':{'ndays':30,'lim_lo':243,'lim_hi':273},
-                            'Oct':{'ndays':31,'lim_lo':273,'lim_hi':304},
-                            'Nov':{'ndays':30,'lim_lo':304,'lim_hi':334},
-                            'Dec':{'ndays':31,'lim_lo':334,'lim_hi':365} })
+            # a nested ordered dictionary containing info for each month
+            month_info = OrderedDict({ 'Jan': {'ndays':31,'lim_lo':0,'lim_hi':31},
+                                'Feb':{'ndays':28,'lim_lo':31,'lim_hi':59},
+                                'Mar':{'ndays':31,'lim_lo':59,'lim_hi':90},
+                                'Apr':{'ndays':30,'lim_lo':90,'lim_hi':120},
+                                'May':{'ndays':31,'lim_lo':120,'lim_hi':151},
+                                'Jun':{'ndays':30,'lim_lo':151,'lim_hi':181},
+                                'Jul':{'ndays':31,'lim_lo':181,'lim_hi':212},
+                                'Aug':{'ndays':31,'lim_lo':212,'lim_hi':243},
+                                'Sep':{'ndays':30,'lim_lo':243,'lim_hi':273},
+                                'Oct':{'ndays':31,'lim_lo':273,'lim_hi':304},
+                                'Nov':{'ndays':30,'lim_lo':304,'lim_hi':334},
+                                'Dec':{'ndays':31,'lim_lo':334,'lim_hi':365} })
 
-        # put the computations inside a delayed function
-        @dask.delayed
-        def monthly_aggregate(daily,ndays,lim_lo,lim_hi):
-            monthly=daily[:,:,lim_lo:lim_hi].sum(axis=2)/ndays
-            return monthly
+            # put the computations inside a delayed function
+            @dask.delayed
+            def monthly_aggregate(daily,ndays,lim_lo,lim_hi):
+                monthly=daily[:,:,lim_lo:lim_hi].sum(axis=2)/ndays
+                return monthly
 
-        # in a regular non-delayed loop, call delayed function and compile list of future compute tasks
-        task_list=[]                        
-        for month_inputs in month_info.values():
-            task=monthly_aggregate(daily_arr,month_inputs['ndays'],month_inputs['lim_lo'],month_inputs['lim_hi'])
-            task_list.append(task)
+            # in a regular non-delayed loop, call delayed function and compile list of future compute tasks
+            task_list=[]                        
+            for month_inputs in month_info.values():
+                task=monthly_aggregate(daily_arr,month_inputs['ndays'],month_inputs['lim_lo'],month_inputs['lim_hi'])
+                task_list.append(task)
 
-        # compute tasks in parallel
-        # this returns a list of arrays in the same order as month_info
-        data_list=dask.compute(*task_list)
+            # compute tasks in parallel
+            # this returns a list of arrays in the same order as month_info
+            data_list=dask.compute(*task_list)
 
-        # stack the results along a 3rd dimension (ny,nx,12)
-        monthly_arr=np.stack(data_list,axis=-1,dtype='float32')        
+            # stack the results along a 3rd dimension (ny,nx,12)
+            monthly_arr=np.stack(data_list,axis=-1,dtype='float32')  
+        else:      
 
-        # monthly_vector = da.zeros((daily_vector.shape[0],daily_vector.shape[1],12),chunks=self.chunk3D)
-        # monthly_vector = np.zeros((daily_vector.shape[0],daily_vector.shape[1],12))
+            monthly_arr = np.zeros((daily_arr.shape[0],daily_arr.shape[1],12))
 
-        # monthly_vector[:,:,0] = daily_vector[:,:,:31].sum(axis=2)/31
-        # monthly_vector[:,:,1] = daily_vector[:,:,31:59].sum(axis=2)/28
-        # monthly_vector[:,:,2] = daily_vector[:,:,59:90].sum(axis=2)/31
-        # monthly_vector[:,:,3] = daily_vector[:,:,90:120].sum(axis=2)/30
-        # monthly_vector[:,:,4] = daily_vector[:,:,120:151].sum(axis=2)/31
-        # monthly_vector[:,:,5] = daily_vector[:,:,151:181].sum(axis=2)/30
-        # monthly_vector[:,:,6] = daily_vector[:,:,181:212].sum(axis=2)/31
-        # monthly_vector[:,:,7] = daily_vector[:,:,212:243].sum(axis=2)/31
-        # monthly_vector[:,:,8] = daily_vector[:,:,243:273].sum(axis=2)/30
-        # monthly_vector[:,:,9] = daily_vector[:,:,273:304].sum(axis=2)/31
-        # monthly_vector[:,:,10] = daily_vector[:,:,304:334].sum(axis=2)/30
-        # monthly_vector[:,:,11] = daily_vector[:,:,334:].sum(axis=2)/31            
+            monthly_arr[:,:,0] = daily_arr[:,:,:31].sum(axis=2)/31
+            monthly_arr[:,:,1] = daily_arr[:,:,31:59].sum(axis=2)/28
+            monthly_arr[:,:,2] = daily_arr[:,:,59:90].sum(axis=2)/31
+            monthly_arr[:,:,3] = daily_arr[:,:,90:120].sum(axis=2)/30
+            monthly_arr[:,:,4] = daily_arr[:,:,120:151].sum(axis=2)/31
+            monthly_arr[:,:,5] = daily_arr[:,:,151:181].sum(axis=2)/30
+            monthly_arr[:,:,6] = daily_arr[:,:,181:212].sum(axis=2)/31
+            monthly_arr[:,:,7] = daily_arr[:,:,212:243].sum(axis=2)/31
+            monthly_arr[:,:,8] = daily_arr[:,:,243:273].sum(axis=2)/30
+            monthly_arr[:,:,9] = daily_arr[:,:,273:304].sum(axis=2)/31
+            monthly_arr[:,:,10] = daily_arr[:,:,304:334].sum(axis=2)/30
+            monthly_arr[:,:,11] = daily_arr[:,:,334:].sum(axis=2)/31            
 
         return monthly_arr
         # return monthly_vector.compute()
@@ -271,9 +273,9 @@ class UtilitiesCalc(object):
 
         if chunk3D:
             self.chunk3D=chunk3D
-            self.parallel=True
+            # self.parallel=True
 
-        if self.parallel:
+        # if self.parallel:
             # spline fitting
             def polyfit_polyval(x,y,deg):
                 coefs=np.polynomial.polynomial.polyfit(x,y,deg=deg)         
@@ -318,14 +320,43 @@ class UtilitiesCalc(object):
         
         return interp_daily_temp.astype('float32')   #KLG
 
-    def setChunks(self,nchunks,nlons):
+    def setChunks(self,nchunks,shape):
+        nlats=shape[0]
+        nlons=shape[1]
+        ntimes=shape[2]
 
-        # how many longitudes per chunk
-        chunk_nlons=int(da.ceil(nlons/nchunks))
+        if nchunks:
+            # user override for default nchunks
+            # how many longitudes per chunk
+            nlons_chunk=int(np.ceil(nlons/nchunks))
+        else:
+            # default nchunks based on system properties    
+            RAMinfo=psutil.virtual_memory() # returns info about system RAM in bytes
+            threads=psutil.cpu_count()  # return system number of threads 
+            scale_factor=35             # how much RAM per thread is needed for computation, defined as a factor of the size of a 3D data chunk
+            buff=250000000            # amount of RAM (bytes) to reduce RAM.free to be safe (.25GB) 
+
+            chunklim=(RAMinfo.free - buff)/threads/scale_factor  # max size (bytes) per 3D data chunk for computation to succeed on each thread
+            npoints=chunklim/4  # number of data points that can fit in the chunklim (4 bytes is the size of one float32 data point)
+            
+            # we chunk only by longitude
+            # so npoints must contain all lats and all times
+            nlons_chunk=int(np.floor(npoints/nlats/ntimes)) # number of longitudes per chunk 
+            nchunks=int(np.ceil(nlons/nlons_chunk))
 
         # dimensions of a single chunk for 3D and 2D arrays, -1 means all latitudes and all times
-        chunk3D=(-1,chunk_nlons,-1)
-        chunk2D=(-1,chunk_nlons)
+        chunk3D=(-1,nlons_chunk,-1)
+        chunk2D=(-1,nlons_chunk)
 
-        return chunk2D, chunk3D
+        chunksize3D_MB=nlats*nlons_chunk*ntimes*4/1E6
+
+        # print('available RAM =',RAMinfo.free/1E9,
+        #     'GB, RAM per thread =',(RAMinfo.free-buff)/threads/1E9,
+        #     'GB, 3D chunk size limit = ',chunklim/1E6,
+        #     'MB, chunksize3D =',chunksize3D_MB,
+        #     'MB, chunk3D =',chunk3D,
+        #     ', chunk2D =',chunk2D,
+        #     'nchunks =',nchunks)
+
+        return chunk2D, chunk3D, chunksize3D_MB, nchunks
 

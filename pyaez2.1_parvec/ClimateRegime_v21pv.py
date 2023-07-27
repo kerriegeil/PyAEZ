@@ -17,23 +17,26 @@ from collections import OrderedDict
 import dask.array as da
 import dask
 
-np.seterr(divide='ignore', invalid='ignore') # ignore "divide by zero" or "divide by NaN" warning
+# np.seterr(divide='ignore', invalid='ignore') # ignore "divide by zero" or "divide by NaN" warning
 
 # Initiate ClimateRegime Class instance
 class ClimateRegime(object):
-    def setParallel(self,var3D,parallel=False,nchunks=238):
+    def setParallel(self,var3D,parallel=False,nchunks=None):
+        # if ~nchunks:
+        #     nchunks=UtilitiesCalc.UtilitiesCalc().getChunks()
+
         if parallel:
             self.parallel=True
 
             # we parallelize by chunking longitudes
-            self.chunk2D,self.chunk3D=UtilitiesCalc.UtilitiesCalc().setChunks(nchunks,var3D.shape[1])
-            self.chunksizeMB=var3D.nbytes/1E6/nchunks   # allow user to see the chunksize in MB   
-            self.nchunks=nchunks        
+            self.chunk2D,self.chunk3D,self.chunksize3D_MB,self.nchunks=UtilitiesCalc.UtilitiesCalc().setChunks(nchunks,var3D.shape)
+            # =var3D.nbytes/1E6/nchunks   # allow user to see the chunksize in MB   
+            # self.nchunks=nchunks        
         else:
             self.parallel=False
             self.chunk3D=None
             self.chunk2D=None
-            self.chunksizeMD=None
+            self.chunksize3D_MB=None
             self.nchunks=None
         
     def setLocationTerrainData(self, lat_min, lat_max, location, elevation):  #KLG
@@ -48,8 +51,11 @@ class ClimateRegime(object):
             lat_min (float): the minimum latitude of the AOI in decimal degrees
             lat_max (float): the maximum latitude of the AOI in decimal degrees
             elevation (2D NumPy): elevation map in metres
-        """        
-        self.elevation = elevation
+        """
+        if self.parallel:
+            self.elevation = elevation.rechunk(chunks=self.chunk2D)
+        else:        
+            self.elevation = elevation
         self.im_height = elevation.shape[0]
         self.im_width = elevation.shape[1]
         # self.latitude = UtilitiesCalc.UtilitiesCalc().generateLatitudeMap(lat_min, lat_max, self.im_height, self.im_width) 
@@ -142,81 +148,78 @@ class ClimateRegime(object):
         self.doy_start=1  #KLG
         self.doy_end=min_temp.shape[2]  #KLG
 
-        rel_humidity[rel_humidity > 0.99] = 0.99
-        rel_humidity[rel_humidity < 0.05] = 0.05
-        short_rad[short_rad < 0] = 0
-        wind_speed[wind_speed < 0] = 0
-                
-        # self.meanT_daily = np.zeros((self.im_height, self.im_width, 365)) 
-        # self.totalPrec_daily = np.zeros((self.im_height, self.im_width, 365)) 
-        # self.pet_daily = np.zeros((self.im_height, self.im_width, 365))  
-        self.maxT_daily = max_temp
-        self.minT_daily = min_temp
-        self.totalPrec_daily = precipitation  #KLG
-        # del max_temp, min_temp, precipitation  #KLG
+        if self.parallel:
+            min_temp=min_temp.rechunk(chunks=self.chunk3D)
+            max_temp=max_temp.rechunk(chunks=self.chunk3D)
+            tmn_delay=min_temp.to_delayed()
+            tmx_delay=max_temp.to_delayed()
 
-        # exchanging these loops for vectorization #KLG
-        # for i_row in range(self.im_height):  
-        #     for i_col in range(self.im_width):
+            short_rad=short_rad.rechunk(chunks=self.chunk3D) # chunk
+            short_rad=da.where(short_rad < 0, 0, short_rad)  # elim negatives
+            short_rad = (short_rad*3600.*24.)/1000000.       # convert units
+            srad_delay=short_rad.to_delayed()
+            del short_rad   
 
-        #         if self.set_mask:
-        #             if self.im_mask[i_row, i_col] == self.nodata_val:
-        #                 continue
+            wind_speed=wind_speed.rechunk(chunks=self.chunk3D)     # chunk
+            wind_speed=da.where(wind_speed < 0.5, 0.5, wind_speed) # elim negative and small values
+            wind_delay=wind_speed.to_delayed() 
 
-        #         self.meanT_daily[i_row, i_col, :] = 0.5*(min_temp[i_row, i_col, :]+max_temp[i_row, i_col, :])
-        #         self.totalPrec_daily[i_row, i_col, :] = precipitation[i_row, i_col, :]
-                
-        #         calculation of reference evapotranspiration (ETo)
-        #         obj_eto = ETOCalc.ETOCalc(1, 365, self.latitude[i_row, i_col], self.elevation[i_row, i_col])
-        #         shortrad_daily_MJm2day = (short_rad[i_row, i_col, :]*3600*24)/1000000 # convert w/m2 to MJ/m2/day
-        #         obj_eto.setClimateData(min_temp[i_row, i_col, :], max_temp[i_row, i_col, :], wind_speed[i_row, i_col, :], shortrad_daily_MJm2day, rel_humidity[i_row, i_col, :])
-        #         self.pet_daily[i_row, i_col, :] = obj_eto.calculateETO()
+            rel_humidity=rel_humidity.rechunk(chunks=self.chunk3D)        # chunk
+            rel_humidity=da.where(rel_humidity > 0.99, 0.99,rel_humidity) # elim high values
+            rel_humidity=da.where(rel_humidity < 0.05, 0.05,rel_humidity) # elim low values
+            rh_delay=rel_humidity.to_delayed()
+            del rel_humidity  
 
-        # calculation of reference evapotranspiration (ETo)  #KLG
-        obj_eto = ETOCalc.ETOCalc(self.doy_start, self.doy_end, self.latitude, self.elevation)  #KLG
-        shortrad_daily_MJm2day = (short_rad*3600.*24.)/1000000. # convert w/m2 to MJ/m2/day  #KLG
-        obj_eto.setClimateData(self.minT_daily, self.maxT_daily, wind_speed, shortrad_daily_MJm2day, rel_humidity)  #KLG
-        # del rel_humidity,short_rad,wind_speed,shortrad_daily_MJm2day  #KLG
-        self.pet_daily= obj_eto.calculateETO()   #KLG
-        # del obj_eto
+            lat_delay=self.latitude.to_delayed()
+            elev_delay=self.elevation.to_delayed()  
+
+            chunk_shapes=dask.compute([chunk.shape for chunk in tmn_delay.ravel()])
+            zipvars=zip(chunk_shapes[0][:],lat_delay.ravel(),elev_delay.ravel(),tmn_delay.ravel(),tmx_delay.ravel(),wind_delay.ravel(),srad_delay.ravel(),rh_delay.ravel())
+            obj_eto=ETOCalc.ETOCalc()
+            task_list=[dask.delayed(obj_eto.calculateETO)(self.doy_start,self.doy_end,cshape,lat,el,tmn,tmx,u,srad,rh) for cshape,lat,el,tmn,tmx,u,srad,rh in zipvars]
+
+            result_chunks=dask.compute(*task_list)
+            self.pet_daily=np.concatenate(result_chunks,axis=1)                                         
+
+        else:
+            rel_humidity[rel_humidity > 0.99] = 0.99
+            rel_humidity[rel_humidity < 0.05] = 0.05
+            short_rad[short_rad < 0] = 0
+            short_rad = (short_rad*3600.*24.)/1000000.
+            # wind_speed[wind_speed < 0] = 0
+            wind_speed[wind_speed < 0.5] = 0.5
+            
+            obj_eto=ETOCalc.ETOCalc()
+            self.pet_daily= obj_eto.calculateETO(self.doy_start,self.doy_end,min_temp.shape,self.latitude,self.elevation,min_temp,max_temp,wind_speed,short_rad,rel_humidity)
+
+        self.meanT_daily = 0.5*(min_temp + max_temp)  #KLG
 
         # sea level temperature
-        # self.meanT_daily_sealevel = self.meanT_daily + np.tile(np.reshape(self.elevation/100*0.55, (self.im_height,self.im_width,1)), (1,1,365))
-        self.meanT_daily = 0.5*(self.minT_daily+self.maxT_daily)  #KLG
-        self.meanT_daily_sealevel = self.meanT_daily + np.expand_dims(self.elevation/100*0.55,axis=2) # automatic broadcasting #KLG        
-
         # P over PET ratio (to eliminate nan in the result, nan is replaced with zero)
-        self.P_by_PET_daily = np.nan_to_num(self.totalPrec_daily / self.pet_daily)
+        if self.parallel:
+            self.meanT_daily_sealevel = self.meanT_daily + (da.tile(self.elevation[:,:,np.newaxis],(1,1,self.doy_end)).rechunk(chunks=self.chunk3D)/100*0.55)
+            precipitation=precipitation.rechunk(chunks=self.chunk3D)
+            with np.errstate(invalid='ignore',divide='ignore'):
+                self.P_by_PET_daily = da.nan_to_num(precipitation / self.pet_daily)
+        else:
+            self.meanT_daily_sealevel = self.meanT_daily + np.expand_dims(self.elevation/100*0.55,axis=2) # automatic broadcasting #KLG        
+            with np.errstate(invalid='ignore',divide='ignore'):
+                self.P_by_PET_daily = np.nan_to_num(precipitation / self.pet_daily)
+
         self.set_monthly = False
 
         # smoothed daily temperature
-        obj_utilities = UtilitiesCalc.UtilitiesCalc(self.chunk2D,self.chunk3D)  #KLG
-
+        # create a mask of all 1's if the user doesn't provide a mask
         if self.set_mask:
             mask=self.im_mask
         else:
             mask=np.ones((self.im_height,self.im_width),dtype='int')
 
+        obj_utilities = UtilitiesCalc.UtilitiesCalc(self.chunk2D,self.chunk3D)  #KLG
         self.interp_daily_temp=obj_utilities.smoothDailyTemp(self.doy_start,self.doy_end, mask, self.meanT_daily, self.chunk3D)
 
-        # # smoothed mean T  #KLG
-        # # Adding interpolation to the dataset  #KLG
-        # # 5th degree spline fit to smooth in time  #KLG
-        # days = np.arange(self.doy_start,self.doy_end+1) # x values  #KLG
-        # # replace any nan with zero  #KLG
-        # mask3D = np.tile(self.im_mask[:,:,np.newaxis], (1,1,days.shape[0]))  #KLG
-        # data=np.where(mask3D==0,0,self.meanT_daily)   #KLG
-        # data2D=data.transpose(2,0,1).reshape(days.shape[0],-1) # every column is a set of y values  #KLG
-        # del data  #KLG
-        # # do the fitting  #KLG
-        # quad_spl=np.polynomial.polynomial.polyfit(days,data2D,deg=5)  #KLG
-        # interp_daily_temp=np.polynomial.polynomial.polyval(days,quad_spl)  #KLG
-        # #reshape  #KLG
-        # interp_daily_temp=interp_daily_temp.reshape(mask3D.shape[0],mask3D.shape[1],-1)  #KLG
-        # self.interp_daily_temp=interp_daily_temp   #KLG
-
-        # self.chunk3D=(-1,94,-1)
-        # self.chunk2D=(-1,94)
+        self.maxT_daily = max_temp
+        self.totalPrec_daily = precipitation  #KLG
 
 
     def getThermalClimate(self):
@@ -226,18 +229,23 @@ class ClimateRegime(object):
             2D NumPy: Thermal Climate classification
         """        
         # Note that currently, this thermal climate is designed only for the northern hemisphere, southern hemisphere is not implemented yet.
+        # if self.chunk3D:
+        #     thermal_climate = da.empty((self.im_height,self.im_width),dtype='float32',chunks=self.chunk2D)  #KLG
 
-
-        thermal_climate = da.empty((self.im_height,self.im_width),dtype='float32',chunks=self.chunk2D)  #KLG
-        # thermal_climate = np.empty((self.im_height,self.im_width),dtype='float32')  #KLG
+        # else:
+        print('initializing thermal_climate')
+        thermal_climate = np.empty((self.im_height,self.im_width),dtype='float32')  #KLG
         thermal_climate[:] = np.nan  #KLG
 
+        print('converting to monthly')
         # converting daily to monthly  #KLG
+        # everything returned in memory as numpy arrays
         obj_utilities = UtilitiesCalc.UtilitiesCalc(self.chunk2D,self.chunk3D)  #KLG
         meanT_monthly_sealevel = obj_utilities.averageDailyToMonthly(self.meanT_daily_sealevel)  #KLG
         meanT_monthly = obj_utilities.averageDailyToMonthly(self.meanT_daily)  #KLG
         P_by_PET_monthly = obj_utilities.averageDailyToMonthly(self.P_by_PET_daily)  #KLG
 
+        print('preparing .where inputs')
         # things we need to assign thermal_climate values  #KLG
         # compute them here for readability below  #KLG
         summer_PET0=P_by_PET_monthly[:,:,3:9].sum(axis=2) # Apr-Sep  #KLG
@@ -248,11 +256,16 @@ class ClimateRegime(object):
         Ta_diff=meanT_monthly_sealevel.max(axis=2) - meanT_monthly_sealevel.min(axis=2)  #KLG
         meanT=meanT_monthly.mean(axis=2)  #KLG
         nmo_ge_10C=(meanT_monthly_sealevel >= 10).sum(axis=2)  #KLG
-        prsum=self.totalPrec_daily.sum(axis=2)  #KLG
 
+        print('computing monthly pr')
+        if self.chunk3D:
+            prsum=self.totalPrec_daily.sum(axis=2).compute()  #KLG
+        else:
+            prsum=self.totalPrec_daily.sum(axis=2)  #KLG
+
+        print('categorizing pixels')
         # assign values  #KLG
         # use the nan initialization to make sure we don't overwrite and previously assigned values  #KLG
-
         # Tropics  #KLG
         # Tropical lowland  #KLG
         thermal_climate=np.where((min_sealev_meanT>=18.) & (Ta_diff<15.) & (meanT>=20.),1,thermal_climate)  #KLG
@@ -368,12 +381,12 @@ class ClimateRegime(object):
         #         else:
         #             # Arctic
         #             thermal_climate[i_row, i_col] = 12
-                    
+        print('setting mask')                    
         if self.set_mask:
             thermal_climate=np.where(self.im_mask, thermal_climate.astype('float32'), np.nan)  #KLG
-            return thermal_climate.compute()
+            return thermal_climate#.compute()
         else:
-            return thermal_climate.astype('float32').compute()  #KLG
+            return thermal_climate.astype('float32')#.compute()  #KLG
 
     
 
@@ -384,7 +397,8 @@ class ClimateRegime(object):
         Returns:
             2D NumPy: Thermal Zones classification
         """        
-        # thermal_zone = np.zeros((self.im_height, self.im_width))
+        # if self.chunk3D:
+        # else:
         thermal_zone = np.empty((self.im_height,self.im_width),dtype='float32')  #KLG
         thermal_zone[:] = np.nan        
 
