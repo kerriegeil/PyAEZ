@@ -13,7 +13,7 @@ import UtilitiesCalc_v21pv as UtilitiesCalc #KLG
 import ETOCalc_v21pv as ETOCalc # KLG
 import LGPCalc_v21pv as LGPCalc # KLG
 from collections import OrderedDict
-
+import psutil
 import dask.array as da
 import dask
 
@@ -178,6 +178,7 @@ class ClimateRegime(object):
             obj_eto=ETOCalc.ETOCalc()
             task_list=[dask.delayed(obj_eto.calculateETO)(self.doy_start,self.doy_end,cshape,lat,el,tmn,tmx,u,srad,rh) for cshape,lat,el,tmn,tmx,u,srad,rh in zipvars]
 
+            print('in ClimateRegime, computing pet_daily in parallel')
             result_chunks=dask.compute(*task_list)
             self.pet_daily=np.concatenate(result_chunks,axis=1)                                         
 
@@ -241,8 +242,11 @@ class ClimateRegime(object):
         # converting daily to monthly  #KLG
         # everything returned in memory as numpy arrays
         obj_utilities = UtilitiesCalc.UtilitiesCalc(self.chunk2D,self.chunk3D)  #KLG
+        print('computing meanT_monthly_sealevel')
         meanT_monthly_sealevel = obj_utilities.averageDailyToMonthly(self.meanT_daily_sealevel)  #KLG
+        print('computing meanT_monthly')
         meanT_monthly = obj_utilities.averageDailyToMonthly(self.meanT_daily)  #KLG
+        print('computing P_by_PET_monthly')
         P_by_PET_monthly = obj_utilities.averageDailyToMonthly(self.P_by_PET_daily)  #KLG
 
         print('preparing .where inputs')
@@ -259,9 +263,25 @@ class ClimateRegime(object):
 
         print('computing monthly pr')
         if self.chunk3D:
+            print('in ClimateRegime, computing prsum in parallel')
             prsum=self.totalPrec_daily.sum(axis=2).compute()  #KLG
+            latitude=self.latitude.compute()
         else:
             prsum=self.totalPrec_daily.sum(axis=2)  #KLG
+            latitude=self.latitude
+
+        # print(thermal_climate)
+        # print(meanT_monthly_sealevel)
+        # print(meanT_monthly)
+        # print(P_by_PET_monthly)
+        # print(prsum)
+
+        # print(summer_PET0)
+        # print(winter_PET0)
+        # print(min_sealev_meanT)
+        # print(Ta_diff)
+        # print(meanT)
+        # print(nmo_ge_10C)
 
         print('categorizing pixels')
         # assign values  #KLG
@@ -276,11 +296,11 @@ class ClimateRegime(object):
         # Subtropics Low Rainfall  #KLG
         thermal_climate=np.where((min_sealev_meanT>=5.) & (nmo_ge_10C>=8) & (prsum<250) & ~np.isfinite(thermal_climate),3,thermal_climate)  #KLG
         # Subtropics Summer Rainfall  #KLG
-        thermal_climate=np.where((min_sealev_meanT>=5.) & (nmo_ge_10C>=8) & (self.latitude>=0) & (summer_PET0>=winter_PET0) & ~np.isfinite(thermal_climate),4,thermal_climate)  #KLG
-        thermal_climate=np.where((min_sealev_meanT>=5.) & (nmo_ge_10C>=8) & (self.latitude<0) & (summer_PET0<winter_PET0) & ~np.isfinite(thermal_climate),4,thermal_climate)  #KLG
+        thermal_climate=np.where((min_sealev_meanT>=5.) & (nmo_ge_10C>=8) & (latitude>=0) & (summer_PET0>=winter_PET0) & ~np.isfinite(thermal_climate),4,thermal_climate)  #KLG
+        thermal_climate=np.where((min_sealev_meanT>=5.) & (nmo_ge_10C>=8) & (latitude<0) & (summer_PET0<winter_PET0) & ~np.isfinite(thermal_climate),4,thermal_climate)  #KLG
         # Subtropics Winter Rainfall  #KLG
-        thermal_climate=np.where((min_sealev_meanT>=5.) & (nmo_ge_10C>=8) & (self.latitude>=0) & (summer_PET0<winter_PET0) & ~np.isfinite(thermal_climate),5,thermal_climate)  #KLG
-        thermal_climate=np.where((min_sealev_meanT>=5.) & (nmo_ge_10C>=8) & (self.latitude<0) & (summer_PET0>=winter_PET0) & ~np.isfinite(thermal_climate),5,thermal_climate)  #KLG
+        thermal_climate=np.where((min_sealev_meanT>=5.) & (nmo_ge_10C>=8) & (latitude>=0) & (summer_PET0<winter_PET0) & ~np.isfinite(thermal_climate),5,thermal_climate)  #KLG
+        thermal_climate=np.where((min_sealev_meanT>=5.) & (nmo_ge_10C>=8) & (latitude<0) & (summer_PET0>=winter_PET0) & ~np.isfinite(thermal_climate),5,thermal_climate)  #KLG
         
         # Temperate  #KLG
         # Oceanic Temperate  #KLG
@@ -300,7 +320,6 @@ class ClimateRegime(object):
         
         # Arctic  #KLG
         thermal_climate=np.where(~np.isfinite(thermal_climate),12,thermal_climate)  #KLG
-
 
         # thermal_climate = np.zeros((self.im_height, self.im_width), dtype= np.int8)
 
@@ -383,8 +402,12 @@ class ClimateRegime(object):
         #             thermal_climate[i_row, i_col] = 12
         print('setting mask')                    
         if self.set_mask:
-            thermal_climate=np.where(self.im_mask, thermal_climate.astype('float32'), np.nan)  #KLG
-            return thermal_climate#.compute()
+            if self.parallel:
+                mask=self.im_mask.compute()
+            else:
+                mask=self.im_mask
+            thermal_climate=np.where(mask, thermal_climate.astype('float32'), np.nan)  #KLG
+            return thermal_climate
         else:
             return thermal_climate.astype('float32')#.compute()  #KLG
 
@@ -403,8 +426,10 @@ class ClimateRegime(object):
         thermal_zone[:] = np.nan        
 
         # converting daily to monthly
-        obj_utilities = UtilitiesCalc.UtilitiesCalc()
+        obj_utilities = UtilitiesCalc.UtilitiesCalc(self.chunk2D,self.chunk3D)  #KLG
+        print('computing meanT_monthly')        
         meanT_monthly = obj_utilities.averageDailyToMonthly(self.meanT_daily)
+        print('computing meanT_monthly_sealevel')        
         meanT_monthly_sealevel = obj_utilities.averageDailyToMonthly(self.meanT_daily_sealevel)
 
         # things we need to determine the classes
@@ -493,7 +518,11 @@ class ClimateRegime(object):
         #                 thermal_zone[i_row,i_col] = 12 # Arctic
     
         if self.set_mask:
-            return np.where(self.im_mask, thermal_zone.astype('float32'), np.nan)  #KLG
+            if self.parallel:
+                mask=self.im_mask.compute()
+            else:
+                mask=self.im_mask            
+            return np.where(mask, thermal_zone.astype('float32'), np.nan)  #KLG
         else:
             return thermal_zone.astype('float32')  #KLG
 
@@ -512,6 +541,9 @@ class ClimateRegime(object):
         if self.set_mask:
             lgpt0 = np.where(self.im_mask,lgpt0,np.nan)
         
+        if self.parallel:
+            lgpt0=lgpt0.compute()
+
         self.lgpt0=lgpt0.copy()
         return lgpt0.astype('float32')
 
@@ -527,6 +559,9 @@ class ClimateRegime(object):
         lgpt5 = np.sum(self.meanT_daily>=5, axis=2)
         if self.set_mask:
             lgpt5 = np.where(self.im_mask,lgpt5,np.nan)
+        
+        if self.parallel:
+            lgpt5=lgpt5.compute()
 
         self.lgpt5 = lgpt5.copy()
         return lgpt5.astype('float32')
@@ -543,6 +578,9 @@ class ClimateRegime(object):
         lgpt10 = np.sum(self.meanT_daily >= 10, axis=2)
         if self.set_mask:
             lgpt10 = np.where(self.im_mask, lgpt10, np.nan)
+        
+        if self.parallel:
+            lgpt10=lgpt10.compute()
 
         self.lgpt10 = lgpt10.copy()
         return lgpt10.astype('float32')
@@ -556,11 +594,16 @@ class ClimateRegime(object):
                       when Ta is above the thresholds of 0 degree Celcius
         """
         tempT = self.meanT_daily.copy()
-        tempT[tempT<0] = 0
+        tempT=np.where(tempT<0,0,tempT)
         tsum0 = np.round(np.sum(tempT, axis=2), decimals = 0) 
+
         # masking
         if self.set_mask:
             tsum0 = np.where(self.im_mask, tsum0, np.nan)
+        
+        if self.parallel:
+            print('in ClimateRegime, computing tsum0 in parallel')
+            tsum0=tsum0.compute()
         return tsum0
 
     def getTemperatureSum5(self):
@@ -572,11 +615,15 @@ class ClimateRegime(object):
                       when Ta is above the thresholds of 5 degree Celcius
         """
         tempT = self.meanT_daily.copy()
-        tempT[tempT<5] = 0
+        tempT=np.where(tempT<5,0,tempT)
         tsum5 = np.round(np.sum(tempT, axis=2), decimals = 0) 
+
         # masking
         if self.set_mask: 
             tsum5 = np.where(self.im_mask, tsum5, np.nan)
+
+        if self.parallel:
+            tsum5=tsum5.compute()
         return tsum5
         
 
@@ -589,11 +636,15 @@ class ClimateRegime(object):
                       when Ta is above the thresholds of 10 degree Celcius
         """
         tempT = self.meanT_daily.copy()
-        tempT[tempT<10] = 0
+        tempT=np.where(tempT<10,0,tempT)
         tsum10 = np.round(np.sum(tempT, axis=2), decimals = 0) 
+
         # masking
         if self.set_mask: 
             tsum10 = np.where(self.im_mask, tsum10, np.nan)
+
+        if self.parallel:
+            tsum10=tsum10.compute()            
         return tsum10
 
     def getTemperatureProfile(self):
@@ -654,9 +705,13 @@ class ClimateRegime(object):
         meanT_diff=dask.delayed(meanT_diff)
         meanT_first=dask.delayed(meanT_first)
 
-        # create a mask of all 1's if a mask doesn't already exist
+        # create a numpy mask of all 1's if a mask doesn't already exist
         if self.set_mask:
-            mask=self.im_mask
+            if self.parallel:
+                # convert dask to numpy
+                mask=self.im_mask.compute()
+            else:
+                mask=self.im_mask                
         else:
             mask=np.ones((self.im_height,self.im_width),dtype='int')
         mask=dask.delayed(mask)
@@ -669,6 +724,7 @@ class ClimateRegime(object):
             if tendency=='cooling':
                 tclass_ndays = np.sum( (diff<0)&(meanT>=lim_lo)&(meanT<lim_hi), axis=2 )
 
+            # apply mask
             tclass_ndays=np.where(mask, tclass_ndays.astype('float32'), np.nan)
             return tclass_ndays
 
@@ -680,6 +736,7 @@ class ClimateRegime(object):
         
         # compute tasks in parallel
         # this returns a list of arrays in the same order as tclass_info
+        print('in ClimateRegime, computing temperature profiles')
         data_out=dask.compute(*task_list)
 
         # apply the mask  #KLG
@@ -716,23 +773,26 @@ class ClimateRegime(object):
         Sb_old = np.zeros((self.im_height,self.im_width),dtype='float32')  #KLG
         Wb_old = np.zeros((self.im_height,self.im_width),dtype='float32')  #KLG       
         #============================
-        Tx365 = self.maxT_daily.copy()
-        Ta365 = self.meanT_daily.copy()
-        Pcp365 = self.totalPrec_daily.copy()
-        self.Eto365 = self.pet_daily.copy()  # Eto
+        Tx365 = self.maxT_daily
+        Ta365 = self.meanT_daily
+        Pcp365 = self.totalPrec_daily
+        # self.Eto365 = self.pet_daily.copy()  # Eto
         # self.Etm365 = np.zeros(Tx365.shape)
         # self.Eta365 = np.zeros(Tx365.shape)
         # self.Sb365 = np.zeros(Tx365.shape)
         # self.Wb365 = np.zeros(Tx365.shape)
         # self.Wx365 = np.zeros(Tx365.shape)
         # self.kc365 = np.zeros(Tx365.shape)
-        self.Etm365 = np.empty(Tx365.shape)  #KLG
-        self.Eta365 = np.empty(Tx365.shape)  #KLG
-        self.Sb365 = np.empty(Tx365.shape)  #KLG
-        self.Wb365 = np.empty(Tx365.shape)  #KLG
-        self.Wx365 = np.empty(Tx365.shape)  #KLG
-        self.kc365 = np.empty(Tx365.shape)  #KLG
-        self.Etm365[:],self.Eta365[:],self.Wb365[:],self.Wx365[:],self.Sb365[:],self.kc365[:]=np.nan,np.nan,np.nan,np.nan,np.nan,np.nan  #KLG
+        # self.Etm365 = np.empty(Tx365.shape)  #KLG
+        # self.Eta365 = np.empty(Tx365.shape)  #KLG
+        self.Etm365 = np.empty(self.meanT_daily.shape,dtype='float32')  #KLG
+        self.Eta365 = np.empty(self.meanT_daily.shape,dtype='float32')  #KLG        
+        # self.Sb365 = np.empty(Tx365.shape)  #KLG
+        # self.Wb365 = np.empty(Tx365.shape)  #KLG
+        # self.Wx365 = np.empty(Tx365.shape)  #KLG
+        # self.kc365 = np.empty(Tx365.shape)  #KLG
+        # self.Etm365[:],self.Eta365[:],self.Wb365[:],self.Wx365[:],self.Sb365[:],self.kc365[:]=np.nan,np.nan,np.nan,np.nan,np.nan,np.nan  #KLG
+        self.Etm365[:],self.Eta365[:]=np.nan,np.nan
 
         # meanT_daily_new = np.zeros(Tx365.shape)
         # self.maxT_daily_new = np.zeros(Tx365.shape)
@@ -740,65 +800,34 @@ class ClimateRegime(object):
         #============================
 
         # things we can pull out of the slow loops  #KLG
-        lgpt5 = self.lgpt5  #KLG
-        totalPrec_monthly = UtilitiesCalc.UtilitiesCalc().averageDailyToMonthly(self.totalPrec_daily)  #KLG
-        istart0, istart1 = LGPCalc.rainPeak(totalPrec_monthly, Ta365, lgpt5)  #KLG
-        p = LGPCalc.psh(np.zeros(self.Eto365.shape), self.Eto365)   #KLG
-
-
-        # for i_row in range(self.im_height):
-        #     for i_col in range(self.im_width):
-
-        #         lgpt5_point = self.lgpt5[i_row, i_col]
-
-        #         totalPrec_monthly = UtilitiesCalc.UtilitiesCalc().averageDailyToMonthly(self.totalPrec_daily[i_row, i_col, :])
-        #         meanT_daily_point = Ta365[i_row, i_col, :]
-        #         istart0, istart1 = LGPCalc.rainPeak(totalPrec_monthly, meanT_daily_point, lgpt5_point)
-        #         #----------------------------------
-        #         if self.set_mask:
-        #             if self.im_mask[i_row, i_col] == self.nodata_val:
-        #                 continue
-
-        #         for doy in range(0, 365):
-        #             p = LGPCalc.psh(
-        #                 0., self.Eto365[i_row, i_col, doy])
-        #             Eta_new, Etm_new, Wb_new, Wx_new, Sb_new, kc_new = LGPCalc.EtaCalc(
-        #                 np.float64(Tx365[i_row, i_col, doy]), np.float64(
-        #                     Ta365[i_row, i_col, doy]),
-        #                     # Ta365[i_row, i_col, doy]),
-        #                 np.float64(Pcp365[i_row, i_col, doy]), Txsnm, Fsnm, np.float64(
-        #                     self.Eto365[i_row, i_col, doy]),
-        #                 Wb_old, Sb_old, doy, istart0, istart1,
-        #                 Sa, D, p, kc_list, lgpt5_point)
-
-        #             if Eta_new <0.: Eta_new = 0.
-
-        #             self.Eta365[i_row, i_col, doy] = Eta_new
-        #             self.Etm365[i_row, i_col, doy] = Etm_new
-        #             self.Wb365[i_row, i_col, doy] = Wb_new
-        #             self.Wx365[i_row, i_col, doy] = Wx_new
-        #             self.Sb365[i_row, i_col, doy] = Sb_new
-        #             self.kc365[i_row, i_col, doy] = kc_new
-
-        #             Wb_old = Wb_new
-        #             Sb_old = Sb_new
+        # lgpt5 = self.lgpt5  #KLG
+        totalPrec_monthly = UtilitiesCalc.UtilitiesCalc(self.chunk2D,self.chunk3D).averageDailyToMonthly(self.totalPrec_daily)  #KLG
+        istart0, istart1 = LGPCalc.rainPeak(totalPrec_monthly, self.meanT_daily, self.lgpt5,self.parallel)  #KLG
+        p = LGPCalc.psh(np.zeros(self.pet_daily.shape), self.pet_daily)   #KLG
 
         # eliminate all but the time loop  #KLG
         if self.set_mask:
-            mask=self.im_mask
+            if self.parallel:
+                mask=self.im_mask.compute()
+            else:
+                mask=self.im_mask
         else:
             mask=np.ones((self.im_height,self.im_width),dtype='int')
         
+        if self.parallel:
+            Tx365=Tx365.compute()  # convert dask to numpy
+            Ta365=Ta365.compute()  # convert dask to numpy
+            Pcp365=Pcp365.compute()  # convert dask to numpy     
+
         for doy in range(self.doy_start-1, self.doy_end):  #KLG
-            # result = LGPCalc.EtaCalc(
             Eta_new, Etm_new, Wb_new, Wx_new, Sb_new, kc_new = LGPCalc.EtaCalc(
                                     mask,
-                                    np.float64(Tx365[:,:,doy]), 
-                                    np.float64(Ta365[:,:,doy]),
-                                    np.float64(Pcp365[:,:,doy]), 
+                                    Tx365[:,:,doy], 
+                                    Ta365[:,:,doy],
+                                    Pcp365[:,:,doy], 
                                     Txsnm, 
                                     Fsnm, 
-                                    np.float64(self.Eto365[:,:,doy]),
+                                    self.pet_daily[:,:,doy],
                                     Wb_old, 
                                     Sb_old, 
                                     doy, 
@@ -808,52 +837,28 @@ class ClimateRegime(object):
                                     D, 
                                     p[:,:,doy], 
                                     kc_list, 
-                                    self.lgpt5)  #KLG
-            # print(len(result))
-            # print(result[0].shape)
+                                    self.lgpt5)  #KLG            
 
-            # self.Eta365[:,:,doy]=Eta_new  #KLG
-            # self.Etm365[:,:,doy]=Etm_new  #KLG
+            self.Eta365[:,:,doy]=Eta_new  #KLG
+            self.Etm365[:,:,doy]=Etm_new  #KLG
             # self.Wb365[:,:,doy]=Wb_new  #KLG
             # self.Wx365[:,:,doy]=Wx_new  #KLG
             # self.Sb365[:,:,doy]=Sb_new  #KLG
             # self.kc365[:,:,doy]=kc_new  #KLG
 
-            self.Eta365[:,:,doy]=Eta_new  #KLG
-            self.Etm365[:,:,doy]=Etm_new  #KLG
-            self.Wb365[:,:,doy]=Wb_new  #KLG
-            self.Wx365[:,:,doy]=Wx_new  #KLG
-            self.Sb365[:,:,doy]=Sb_new  #KLG
-            self.kc365[:,:,doy]=kc_new  #KLG
-
             Wb_old=Wb_new.copy()  #KLG
             Sb_old=Sb_new.copy()  #KLG
 
         self.Eta365=np.where(self.Eta365<0,0,self.Eta365)  #KLG
-        #============================================
-        # for i_row in range(self.im_height):
-        #     for i_col in range(self.im_width):
-        #         if self.set_mask:
-        #             if self.im_mask[i_row, i_col] == self.nodata_val:
-        #                 continue
-        #         Etm365X = np.append(self.Etm365[i_row, i_col, :], self.Etm365[i_row, i_col, :])
-        #         Eta365X = np.append(self.Eta365[i_row, i_col, :], self.Eta365[i_row, i_col, :])
-        #         islgp = LGPCalc.islgpt(self.meanT_daily[i_row, i_col, :])
-        #         xx = LGPCalc.val10day(Eta365X)
-        #         yy = LGPCalc.val10day(Etm365X)
-        #         lgp_whole = xx[:365]/yy[:365]
-        #         count = 0
-        #         for i in range(len(lgp_whole)):
-        #             if islgp[i] == 1 and lgp_whole[i] >= 0.4:
-        #                 count = count+1
 
-        #         lgp_tot[i_row, i_col] = count
         Etm365X = np.append(self.Etm365, self.Etm365[:,:,0:30],axis=2)  #KLG
         Eta365X = np.append(self.Eta365, self.Eta365[:,:,0:30],axis=2)  #KLG
 
         # eliminate call to LGPCalc.islgpt  #KLG
         islgp=np.where(self.meanT_daily>=5,1,0)  #KLG
-        
+        if self.parallel:
+            islgp=islgp.compute()
+
         xx = LGPCalc.val10day(Eta365X)  #KLG
         yy = LGPCalc.val10day(Etm365X)  #KLG
     
@@ -863,7 +868,11 @@ class ClimateRegime(object):
         lgp_tot=np.where((islgp==1)&(lgp_whole>=0.4),1,0).sum(axis=2)  #KLG
         
         if self.set_mask:
-            return np.where(self.im_mask, lgp_tot.astype('float32'), np.nan)  #KLG
+            # if self.parallel:
+            #     mask=self.im_mask.compute()
+            # else:
+            #     mask=self.im_mask
+            return np.where(mask, lgp_tot.astype('float32'), np.nan)  #KLG
         else:
             return lgp_tot.astype('float32')  #KLG
   
@@ -880,16 +889,20 @@ class ClimateRegime(object):
 
         lgp_class = np.zeros(lgp.shape,dtype='float32')  #KLG
 
-        lgp_class[lgp>=365] = 7 # Per-humid
-        lgp_class[np.logical_and(lgp>=270, lgp<365)] = 6 # Humid
-        lgp_class[np.logical_and(lgp>=180, lgp<270)] = 5 # Sub-humid
-        lgp_class[np.logical_and(lgp>=120, lgp<180)] = 4 # Moist semi-arid
-        lgp_class[np.logical_and(lgp>=60, lgp<120)] = 3 # Dry semi-arid
-        lgp_class[np.logical_and(lgp>0, lgp<60)] = 2 # Arid
-        lgp_class[lgp<=0] = 1 # Hyper-arid
+        lgp_class=np.where(lgp>=365,7,lgp_class) # Per-humid
+        lgp_class=np.where((lgp>=270)&(lgp<365),6,lgp_class) # Humid
+        lgp_class=np.where((lgp>=180)&(lgp<270),5,lgp_class) # Sub-humid
+        lgp_class=np.where((lgp>=120)&(lgp<180),4,lgp_class) # Moist semi-arid
+        lgp_class=np.where((lgp>=60)&(lgp<120),3,lgp_class) # Dry semi-arid
+        lgp_class=np.where((lgp>0)&(lgp<60),2,lgp_class) # Arid
+        lgp_class=np.where(lgp<=0,1,lgp_class) # Hyper-arid
 
         if self.set_mask:
-            return np.where(self.im_mask, lgp_class, np.nan)
+            if self.parallel:
+                mask=self.im_mask.compute()
+            else:
+                mask=self.im_mask
+            return np.where(mask, lgp_class, np.nan)
         else:
             return lgp_class
         
@@ -900,14 +913,22 @@ class ClimateRegime(object):
         Returns:
             2D NumPy: LGP Equivalent 
         """        
-        moisture_index = np.sum(self.totalPrec_daily,
-                                axis=2)/np.sum(self.pet_daily, axis=2)
+        if self.parallel:
+            precipitation=self.totalPrec_daily.compute()
+        else:
+            precipitation=self.totalPrec_daily
+
+        moisture_index = np.sum(precipitation,axis=2)/np.sum(self.pet_daily, axis=2)
 
         lgp_equv = 14.0 + 293.66*moisture_index - 61.25*moisture_index*moisture_index
-        lgp_equv[moisture_index > 2.4] = 366
+        lgp_equv=np.where(moisture_index>2.4,366,lgp_equv)
 
         if self.set_mask:
-            return np.where(self.im_mask, lgp_equv.astype('float32'), np.nan)  #KLG
+            if self.parallel:
+                mask=self.im_mask.compute()
+            else:
+                mask=self.im_mask
+            return np.where(mask, lgp_equv.astype('float32'), np.nan)  #KLG
         else:
             return lgp_equv
 

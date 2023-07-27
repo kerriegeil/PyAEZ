@@ -109,6 +109,7 @@ class UtilitiesCalc(object):
 
             # compute tasks in parallel
             # this returns a list of arrays in the same order as month_info
+            print('in UtlitiesCalc, computing monthly aggregate in parallel')
             data_list=dask.compute(*task_list)
 
             # stack the results along a 3rd dimension (ny,nx,12)
@@ -297,6 +298,7 @@ class UtilitiesCalc(object):
             delayed_chunks=data2D.to_delayed()
             
             task_list = [dask.delayed(polyfit_polyval)(days,dchunk,deg) for dchunk in delayed_chunks[0,:]]
+            print('in UtilitiesCalc, computing interp_daily_temp in parallel')
             results_list=dask.compute(*task_list)
 
             interp_daily_temp=np.concatenate(results_list).reshape(mask3D.shape[0],mask3D.shape[1],-1)  #KLG
@@ -343,6 +345,11 @@ class UtilitiesCalc(object):
             # so npoints must contain all lats and all times
             nlons_chunk=int(np.floor(npoints/nlats/ntimes)) # number of longitudes per chunk 
             nchunks=int(np.ceil(nlons/nlons_chunk))
+
+            # making sure we have at least as many chunks as threads
+            if nchunks < threads:
+                nchunks=threads
+                nlons_chunk=int(np.ceil(nlons/nchunks))
 
         # dimensions of a single chunk for 3D and 2D arrays, -1 means all latitudes and all times
         chunk3D=(-1,nlons_chunk,-1)
