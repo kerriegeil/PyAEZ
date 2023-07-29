@@ -174,7 +174,7 @@ class ETOCalc(object):
 
         et0 = np.where(et0<0,0,et0)
 
-        return et0
+        return et0.astype('float32')
 
     # def calculateETO(self):
     #     return ETOCalc.calculateETONumba(self.cycle_begin, self.cycle_end, self.latitude, self.alt,  self.minT_daily, self.maxT_daily, self.windspeed_daily, self.shortRad_daily, self.rel_humidity)

@@ -25,7 +25,11 @@ class UtilitiesCalc(object):
             chunk2D (len 3 tuple of int): chunk size for 3D arrays
         """        
         self.chunk2D = chunk2D
-        self.chunk3D = chunk3D  
+        self.chunk3D = chunk3D
+        if self.chunk2D:  
+            self.parallel=True
+        else:
+            self.parallel=False
 
     def interpMonthlyToDaily(self, monthly_vector, cycle_begin, cycle_end, no_minus_values=False):
         """Interpolate monthly climate data to daily climate data
@@ -77,7 +81,7 @@ class UtilitiesCalc(object):
         # monthly_vector[10] = np.sum(daily_vector[304:334])/30
         # monthly_vector[11] = np.sum(daily_vector[334:])/31
 
-        if self.chunk3D:
+        if self.parallel:
             # delay the input data so it's copied once instead of at each call of the function
             daily_arr=dask.delayed(daily_arr)
 
@@ -98,6 +102,7 @@ class UtilitiesCalc(object):
             # put the computations inside a delayed function
             @dask.delayed
             def monthly_aggregate(daily,ndays,lim_lo,lim_hi):
+                # with np.errstate(invalid='ignore',divide='ignore'):
                 monthly=daily[:,:,lim_lo:lim_hi].sum(axis=2)/ndays
                 return monthly
 
@@ -134,7 +139,7 @@ class UtilitiesCalc(object):
         return monthly_arr
         # return monthly_vector.compute()
 
-    def generateLatitudeMap(self, lat_min, lat_max, location, im_height, im_width, chunk2D):  #KLG
+    def generateLatitudeMap(self, lat_min, lat_max, location, im_height, im_width):  #KLG
     # def generateLatitudeMap(self, lat_min, lat_max, im_height, im_width):  
     # def generateLatitudeMap(self, lats, location):  #KLG
 
@@ -157,16 +162,16 @@ class UtilitiesCalc(object):
 
         # Generate a 2D array of latitude  #KLG
         # for parallel computing
-        if chunk2D:
+        if self.parallel:
             # For lat_min, lat_max values given at pixel centers  #KLG
             if location:
                 lat_vals=da.linspace(lat_min, lat_max, im_height).astype('float32')  #KLG
-                lat_map=da.tile(lat_vals[:,np.newaxis],(1,im_width)).rechunk(chunks=chunk2D)  #KLG            
+                lat_map=da.tile(lat_vals[:,np.newaxis],(1,im_width)).rechunk(chunks=self.chunk2D)  #KLG            
             # For lat_min, lat_max values given at exterior pixel edges  #KLG
             if ~location:
                 lat_step=(lat_max-lat_min)/im_height  #KLG
                 lat_vals = da.linspace(lat_min+lat_step/2, lat_max-lat_step/2, im_height)  #KLG
-                lat_map=da.tile(lat_vals[:,np.newaxis],(1,im_width)).rechunk(chunks=chunk2D)  #KLG     
+                lat_map=da.tile(lat_vals[:,np.newaxis],(1,im_width)).rechunk(chunks=self.chunk2D)  #KLG     
         # for serial computing
         else:     
             if location:
@@ -259,7 +264,7 @@ class UtilitiesCalc(object):
         return wind_speed * (4.87/np.log(67.8*altitude-5.42))
 
 
-    def smoothDailyTemp(self, day_start, day_end, mask, daily_T, chunk3D):  #KLG
+    def smoothDailyTemp(self, day_start, day_end, mask, daily_T):  #KLG
         """create smoothed daily temperature curve using 5th degree spline 
 
         Args:
@@ -272,36 +277,39 @@ class UtilitiesCalc(object):
             3D NumPy array: 5th degree spline smoothed temperature
         """          
 
-        if chunk3D:
-            self.chunk3D=chunk3D
-            # self.parallel=True
-
-        # if self.parallel:
+        if self.parallel:            
             # spline fitting
             def polyfit_polyval(x,y,deg):
-                coefs=np.polynomial.polynomial.polyfit(x,y,deg=deg)         
-                spline=np.polynomial.polynomial.polyval(x,coefs) 
+                coefs=np.polynomial.polynomial.polyfit(x,y,deg=deg).astype('float32')
+                spline=np.polynomial.polynomial.polyval(x,coefs).astype('float32')
                 return spline.astype('float32') 
 
             deg=5  # polynomial degree for spline fitting
-            days = np.arange(day_start,day_end+1) # x values  #KLG
+            days = np.arange(day_start,day_end+1).astype('int32') # x values  #KLG
 
             # replace any nan in the data with zero (nans may be present under a mask) #KLG
-            mask3D = da.tile(mask[:,:,np.newaxis], (1,1,days.shape[0])).rechunk(chunks=self.chunk3D)  #KLG
-            data=da.where(mask3D==0,0,daily_T)   #KLG
+            mask3D = da.tile(mask[:,:,np.newaxis], (1,1,days.shape[0])).rechunk(chunks=self.chunk3D).astype('int32')  #KLG
+            data=da.where(mask3D==0,np.float32(0),np.float32(daily_T))   #KLG
 
             # collapse lat and lon because polyfit and polyval only work on data up to 2 dimensions
-            data2D=data.transpose(2,0,1).reshape(days.shape[0],-1).rechunk({0:-1,1:'auto'})
+            npoints=mask3D.shape[0]*self.chunk3D[1] 
+            data2D=data.transpose(2,0,1).reshape(days.shape[0],-1).rechunk({0:-1,1:npoints}).astype('float32')
+            # data2D=data.transpose(2,0,1).reshape(days.shape[0],-1).rechunk({0:-1,1:'auto'})
 
-            # delay data so it's only passed to computations once
-            days=dask.delayed(days)
-            delayed_chunks=data2D.to_delayed()
-            
-            task_list = [dask.delayed(polyfit_polyval)(days,dchunk,deg) for dchunk in delayed_chunks[0,:]]
             print('in UtilitiesCalc, computing interp_daily_temp in parallel')
-            results_list=dask.compute(*task_list)
+            interp_daily_temp=polyfit_polyval(days,data2D,deg).astype('float32')
+            interp_daily_temp=interp_daily_temp.reshape(mask3D.shape[0],mask3D.shape[1],-1).astype('float32')
+            interp_daily_temp=da.from_array(interp_daily_temp,chunks=self.chunk3D,dtype='float32')
 
-            interp_daily_temp=np.concatenate(results_list).reshape(mask3D.shape[0],mask3D.shape[1],-1)  #KLG
+            # # delay data so it's only passed to computations once
+            # days=dask.delayed(days)
+            # delayed_chunks=data2D.to_delayed()
+            
+            # task_list = [dask.delayed(polyfit_polyval)(days,dchunk,deg) for dchunk in delayed_chunks[0,:]]
+            # print('in UtilitiesCalc, computing interp_daily_temp in parallel')
+            # results_list=dask.compute(*task_list)
+
+            # interp_daily_temp=np.concatenate(results_list).reshape(mask3D.shape[0],mask3D.shape[1],-1)  #KLG
 
         else:
             days = np.arange(day_start,day_end+1) # x values  #KLG
@@ -335,7 +343,7 @@ class UtilitiesCalc(object):
             # default nchunks based on system properties    
             RAMinfo=psutil.virtual_memory() # returns info about system RAM in bytes
             threads=psutil.cpu_count()  # return system number of threads 
-            scale_factor=35             # how much RAM per thread is needed for computation, defined as a factor of the size of a 3D data chunk
+            scale_factor=40             # how much RAM per thread is needed for computation, defined as a factor of the size of a 3D data chunk
             buff=250000000            # amount of RAM (bytes) to reduce RAM.free to be safe (.25GB) 
 
             chunklim=(RAMinfo.free - buff)/threads/scale_factor  # max size (bytes) per 3D data chunk for computation to succeed on each thread
