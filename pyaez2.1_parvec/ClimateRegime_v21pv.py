@@ -830,8 +830,9 @@ class ClimateRegime(object):
         # for var in var_names:  #KLG
         #     data_out.append(var_dict[var].astype('float32'))  #KLG
         
-        # return data_out   
-        return tprofiles              
+        # # return data_out   
+        return tprofiles   
+        # return meanT_first           
 
 
     def getLGP(self, Sa=100., D=1.):

@@ -296,20 +296,24 @@ class UtilitiesCalc(object):
             data2D=data.transpose(2,0,1).reshape(days.shape[0],-1).rechunk({0:-1,1:npoints}).astype('float32')
             # data2D=data.transpose(2,0,1).reshape(days.shape[0],-1).rechunk({0:-1,1:'auto'})
 
-            print('in UtilitiesCalc, computing interp_daily_temp in parallel')
-            interp_daily_temp=polyfit_polyval(days,data2D,deg).astype('float32')
-            interp_daily_temp=interp_daily_temp.reshape(mask3D.shape[0],mask3D.shape[1],-1).astype('float32')
-            interp_daily_temp=da.from_array(interp_daily_temp,chunks=self.chunk3D,dtype='float32')
+            # print('in UtilitiesCalc, computing interp_daily_temp in parallel')
+            # interp_daily_temp=polyfit_polyval(days,data2D,deg).astype('float32')
+            # interp_daily_temp=interp_daily_temp.reshape(mask3D.shape[0],mask3D.shape[1],-1).astype('float32')
+            # interp_daily_temp=da.from_array(interp_daily_temp,chunks=self.chunk3D,dtype='float32')
 
             # # delay data so it's only passed to computations once
-            # days=dask.delayed(days)
-            # delayed_chunks=data2D.to_delayed()
+            days=dask.delayed(days)
+            delayed_chunks=data2D.to_delayed()
             
-            # task_list = [dask.delayed(polyfit_polyval)(days,dchunk,deg) for dchunk in delayed_chunks[0,:]]
-            # print('in UtilitiesCalc, computing interp_daily_temp in parallel')
-            # results_list=dask.compute(*task_list)
+            task_list = [dask.delayed(polyfit_polyval)(days,dchunk,deg) for dchunk in delayed_chunks[0,:]]
+            print('in UtilitiesCalc, computing interp_daily_temp in parallel')
+            results_list=dask.compute(*task_list)
+            # print(results_list[0].shape)
 
-            # interp_daily_temp=np.concatenate(results_list).reshape(mask3D.shape[0],mask3D.shape[1],-1)  #KLG
+            interp_daily_temp=da.concatenate(results_list)
+            interp_daily_temp=interp_daily_temp.reshape(mask3D.shape[0],mask3D.shape[1],-1).rechunk(chunks=self.chunk3D).astype('float32')  #KLG
+            # interp_daily_temp_np=np.concatenate(results_list).reshape(mask3D.shape[0],mask3D.shape[1],-1).astype('float32')  #KLG
+            # interp_daily_temp=da.from_array(interp_daily_temp_np,chunks=self.chunk3D)            
 
         else:
             days = np.arange(day_start,day_end+1) # x values  #KLG
@@ -325,10 +329,11 @@ class UtilitiesCalc(object):
             interp_daily_temp=np.polynomial.polynomial.polyval(days,quad_spl)  #KLG
 
             #reshape  #KLG
-            interp_daily_temp=interp_daily_temp.reshape(mask3D.shape[0],mask3D.shape[1],-1)  #KLG
+            interp_daily_temp=interp_daily_temp.reshape(mask3D.shape[0],mask3D.shape[1],-1).astype('float32')  #KLG
             interp_daily_temp=np.where(mask3D==0,np.nan,interp_daily_temp)
         
         return interp_daily_temp.astype('float32')   #KLG
+        # return results_list
 
     def setChunks(self,nchunks,shape):
         nlats=shape[0]
