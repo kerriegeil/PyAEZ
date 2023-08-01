@@ -8,6 +8,7 @@ PyAEZ: LGPCalc.py calculates the length of growing period (LGP)
 import numpy as np
 import dask
 import psutil
+from time import time as timer
 
 
 # @jit(nopython=True)
@@ -419,6 +420,9 @@ def Eta_class(mask,lgpt5,ta,tx,tmelt):
     # eta_class=np.empty(mask.shape,dtype='float32')
     # eta_class[:]=np.nan
 
+    ta=ta.squeeze()
+    tx=tx.squeeze()
+
     # assign categorical value to snow areas
     eta_class=np.where((ta<=0) & (tx<=tmelt),np.float32(1),np.float32(np.nan))
 
@@ -707,7 +711,7 @@ def EtaCalc_warmest(classmap,classnum,kc_list,eto,sb_old,pr,wb_old,Sa,D,p,Fsnm,t
 
 
 
-def EtaCalc(im_mask,Tx_delayed,Ta_delayed,Pr_delayed,Txsnm,Fsnm,Eto,wb_old,sb_old,idoy,istart0,istart1,Sa,D,p,kc_list,lgpt5):
+def EtaCalc(im_mask_dlyd,Tx_da,Ta_da,Pr_da,Txsnm,Fsnm,Eto_da,wb_old,sb_old,idoy,istart0_dlyd,istart1_dlyd,Sa,D,p_dlyd,kc_list,lgpt5_dlyd):
 
     """vectorized calculation of actual evapotranspiration (ETa)
     
@@ -744,28 +748,34 @@ def EtaCalc(im_mask,Tx_delayed,Ta_delayed,Pr_delayed,Txsnm,Fsnm,Eto,wb_old,sb_ol
     ###############################################################################################
     ######### RETHNK THIS, AND REPLACE DASK.DELAYED WITH TO_DELAYED BELOW #########################
     ###############################################################################################
-    mask_delayed=im_mask.to_delayed().ravel()
-    lgpt5_delayed=lgpt5.to_delayed().ravel()
-    task_list=[dask.delayed(Eta_class)(mask_c,lgpt5_c,Ta_c,Tx_c,Txsnm) for mask_c,lgpt5_c,Ta_c,Tx_c in zip(mask_delayed,lgpt5_delayed,Ta_delayed,Tx_delayed,Txsnm)]
-    results_list=dask.compute(*task_list)
-    eta_class=np.concatenate(results_list,axis=1)
-
+    # mask_delayed=im_mask.to_delayed().ravel()
+    # lgpt5_delayed=lgpt5.to_delayed().ravel()
+    # task_list=[dask.delayed(Eta_class)(mask_c,lgpt5_c,Ta_c,Tx_c,Txsnm) for mask_c,lgpt5_c,Ta_c,Tx_c in zip(mask_delayed,lgpt5_delayed,Ta_delayed,Tx_delayed,Txsnm)]
+    # results_list=dask.compute(*task_list)
+    # eta_class=np.concatenate(results_list,axis=1)
+    start=timer()
+    task_list=dask.delayed(Eta_class)(im_mask_dlyd,lgpt5_dlyd,Ta_da,Tx_da,Txsnm)
+    eta_class=dask.compute(task_list)[0]
+    eta_class_delay=dask.delayed(eta_class)
     # eta_class=Eta_class(im_mask,lgpt5,Ta,Tx,Txsnm)
     ncats=5 # total number of Eta classes
+    task_time=timer()-start
+    print('time spent on eta_class',task_time)
 
-    # we parallelize here by eta_class (the six different regimes for computing ET)
-    # the computations for eta_class are each a delayed function
-    # we call each function which saves the future computation as an object to a list of tasks
-    # then we call compute on the list of tasks at the end to execute them in parallel 
-    eta_class_delay=dask.delayed(eta_class)
-    # mask=dask.delayed(mask)
-    Eto=dask.delayed(Eto)
-    sb_old=dask.delayed(sb_old)
-    Pr=dask.delayed(Pr)
-    wb_old=dask.delayed(wb_old)
-    p=dask.delayed(p)
-    Tx=dask.delayed(Tx)
-
+    # # we parallelize here by eta_class (the six different regimes for computing ET)
+    # # the computations for eta_class are each a delayed function
+    # # we call each function which saves the future computation as an object to a list of tasks
+    # # then we call compute on the list of tasks at the end to execute them in parallel 
+    # eta_class_delay=dask.delayed(eta_class)
+    # # mask=dask.delayed(mask)
+    # Eto=dask.delayed(Eto)
+    sb_old_dlyd=dask.delayed(sb_old)
+    # Pr=dask.delayed(Pr)
+    wb_old_dlyd=dask.delayed(wb_old)
+    # p=dask.delayed(p)
+    # Tx=dask.delayed(Tx)
+    
+    start=timer()
     task_list=[]
 
     # compute for snow class
@@ -782,13 +792,13 @@ def EtaCalc(im_mask,Tx_delayed,Ta_delayed,Pr_delayed,Txsnm,Fsnm,Eto,wb_old,sb_ol
     task=EtaCalc_snow(eta_class_delay,
                     1,
                     kc_list,
-                    Eto,
-                    sb_old,
-                    Pr,
-                    wb_old,
+                    Eto_da,
+                    sb_old_dlyd,
+                    Pr_da,
+                    wb_old_dlyd,
                     Sa,
                     D,
-                    p)                    
+                    p_dlyd)                    
     task_list.append(task) # task list has 1 delayed dask object in it which will compute etm,eta_var,wb,wx,sb,kc
 
     # compute for snow melting class
@@ -808,15 +818,15 @@ def EtaCalc(im_mask,Tx_delayed,Ta_delayed,Pr_delayed,Txsnm,Fsnm,Eto,wb_old,sb_ol
     task=EtaCalc_snowmelting(eta_class_delay,
                             2,
                             kc_list,
-                            Eto,
-                            sb_old,
-                            Pr,
-                            wb_old,
+                            Eto_da,
+                            sb_old_dlyd,
+                            Pr_da,
+                            wb_old_dlyd,
                             Sa,
                             D,
-                            p,
+                            p_dlyd,
                             Fsnm,
-                            Tx,
+                            Tx_da,
                             Txsnm)                                                                        
     task_list.append(task) # task list has 2 delayed dask objects in it
 
@@ -837,15 +847,15 @@ def EtaCalc(im_mask,Tx_delayed,Ta_delayed,Pr_delayed,Txsnm,Fsnm,Eto,wb_old,sb_ol
     task=EtaCalc_cold(eta_class_delay,
                     3,
                     kc_list,
-                    Eto,
-                    sb_old,
-                    Pr,
-                    wb_old,
+                    Eto_da,
+                    sb_old_dlyd,
+                    Pr_da,
+                    wb_old_dlyd,
                     Sa,
                     D,
-                    p,
+                    p_dlyd,
                     Fsnm,
-                    Tx,
+                    Tx_da,
                     Txsnm)                                                               
     task_list.append(task) # task list has 3 delayed dask objects in it
 
@@ -869,18 +879,18 @@ def EtaCalc(im_mask,Tx_delayed,Ta_delayed,Pr_delayed,Txsnm,Fsnm,Eto,wb_old,sb_ol
     task=EtaCalc_warm(eta_class_delay,
                     4,
                     kc_list,
-                    Eto,
-                    sb_old,
-                    Pr,
-                    wb_old,
+                    Eto_da,
+                    sb_old_dlyd,
+                    Pr_da,
+                    wb_old_dlyd,
                     Sa,
                     D,
-                    p,
+                    p_dlyd,
                     Fsnm,
-                    Tx,
+                    Tx_da,
                     Txsnm,
-                    istart0,
-                    istart1,
+                    istart0_dlyd,
+                    istart1_dlyd,
                     idoy)   #                                        
     task_list.append(task) # task list has 4 delayed dask objects in it
 
@@ -901,18 +911,20 @@ def EtaCalc(im_mask,Tx_delayed,Ta_delayed,Pr_delayed,Txsnm,Fsnm,Eto,wb_old,sb_ol
     task=EtaCalc_warmest(eta_class_delay,
                         5,
                         kc_list,
-                        Eto,
-                        sb_old,
-                        Pr,
-                        wb_old,
+                        Eto_da,
+                        sb_old_dlyd,
+                        Pr_da,
+                        wb_old_dlyd,
                         Sa,
                         D,
-                        p,
+                        p_dlyd,
                         Fsnm,
-                        Tx,
+                        Tx_da,
                         Txsnm)    #                             
     task_list.append(task) # task list has 5 delayed dask objects in it, 1 task for each ET function/class
-
+    task_time=timer()-start
+    print('time spent building task_list',task_time)
+    
     # now compute everything
     # result_list is a list of tuples containing arrays: [(etm,eta_var,wb,wx,sb,kc from EtaCalc_snow),(etm,eta_var,wb,wx,sb,kc from EtaCalc_snowmelting),(etm,eta_var,wb,wx,sb,kc from EtaCalc_cold),...]
     # the tuples are returned in the order the functions were called
@@ -920,7 +932,10 @@ def EtaCalc(im_mask,Tx_delayed,Ta_delayed,Pr_delayed,Txsnm,Fsnm,Eto,wb_old,sb_ol
     # e.g. result_list[1][2] is wb from the EtaCalc_snowmelting function
     # print('in LGPCalc before parallel compute', psutil.virtual_memory().free/1E9)
     # print('in LGPCalc, computing ET components for day',idoy+1)
+    start=timer()
     result_list=dask.compute(*task_list) # computing in parallel
+    task_time=timer()-start
+    print('time spent computing',task_time)
     # print('in LGPCalc after parallel compute', psutil.virtual_memory().free/1E9)
     # now combine results for each variable into a single array
     # initialize
@@ -940,7 +955,7 @@ def EtaCalc(im_mask,Tx_delayed,Ta_delayed,Pr_delayed,Txsnm,Fsnm,Eto,wb_old,sb_ol
     #     Wx_new=np.where(eta_class==cat,result_list[i][3],Wx_new)                                                                                        
     #     Sb_new=np.where(eta_class==cat,result_list[i][4],Sb_new)                                                                                        
     #     kc_new=np.where(eta_class==cat,result_list[i][5],kc_new)      
-
+    start=timer()
     def aggregate_classes(arr_shape,ncats,res_list,var_index):
         var_new=np.empty(arr_shape,dtype='float32')
         var_new[:]=np.nan
@@ -952,11 +967,11 @@ def EtaCalc(im_mask,Tx_delayed,Ta_delayed,Pr_delayed,Txsnm,Fsnm,Eto,wb_old,sb_ol
 
     result_list=dask.delayed(result_list)
     task_list=[]
-    task = dask.delayed(aggregate_classes)(im_mask.shape,ncats,result_list,0) # delayed Etm_new aggregation
+    task = dask.delayed(aggregate_classes)(Tx_da.shape,ncats,result_list,0) # delayed Etm_new aggregation
     task_list.append(task)
-    task = dask.delayed(aggregate_classes)(im_mask.shape,ncats,result_list,1) # delayed Eta_new aggregation
+    task = dask.delayed(aggregate_classes)(Tx_da.shape,ncats,result_list,1) # delayed Eta_new aggregation
     task_list.append(task)
-    task = dask.delayed(aggregate_classes)(im_mask.shape,ncats,result_list,2) # delayed Wb_new aggregation
+    task = dask.delayed(aggregate_classes)(Tx_da.shape,ncats,result_list,2) # delayed Wb_new aggregation
     task_list.append(task)
     # task = dask.delayed(aggregate_classes)(im_mask.shape,ncats,result_list,3) # delayed Wx_new aggregation
     # task_list.append(task)
@@ -964,17 +979,19 @@ def EtaCalc(im_mask,Tx_delayed,Ta_delayed,Pr_delayed,Txsnm,Fsnm,Eto,wb_old,sb_ol
     # task_list.append(task)
     # task = dask.delayed(aggregate_classes)(im_mask.shape,ncats,result_list,5) # delayed kc_new aggregation
     # task_list.append(task)
-    task = dask.delayed(aggregate_classes)(im_mask.shape,ncats,result_list,3) # delayed Sb_new aggregation
+    task = dask.delayed(aggregate_classes)(Tx_da.shape,ncats,result_list,3) # delayed Sb_new aggregation
     task_list.append(task)
 
-    print('in LGPCalc, aggregating ET components for day',idoy+1)
+    # print('in LGPCalc, aggregating ET components for day',idoy+1)
     data_out=dask.compute(*task_list)
+    task_time=timer()-start
+    print('time spent aggregating',task_time)
 
-
-    # print('in LGPCalc after aggregation', psutil.virtual_memory().free/1E9)
-    # return Etm_new,Eta_new,Wb_new,Wx_new,Sb_new,kc_new 
-    # return data_out[0],data_out[1],data_out[2],data_out[3],data_out[4],data_out[5]
-    return data_out[0],data_out[1],data_out[2],data_out[3]
+    # # print('in LGPCalc after aggregation', psutil.virtual_memory().free/1E9)
+    # # return Etm_new,Eta_new,Wb_new,Wx_new,Sb_new,kc_new 
+    # # return data_out[0],data_out[1],data_out[2],data_out[3],data_out[4],data_out[5]
+    return data_out[0],data_out[1],data_out[2],data_out[3]#,eta_class#
+    # return 0,0,0,0
 
 
 # @jit(nopython=True)

@@ -150,6 +150,12 @@ class ClimateRegime(object):
         self.doy_start=1  #KLG
         self.doy_end=min_temp.shape[2]  #KLG
 
+        if self.set_mask:
+            if self.parallel:
+                mask_monthly=np.tile(self.im_mask.compute()[:,:,np.newaxis],(1,1,12)) # mask with matching dims
+            else:
+                mask_monthly=np.tile(self.im_mask[:,:,np.newaxis],(1,1,12)) # mask with matching dims      
+
         if self.parallel:
             min_temp=min_temp.rechunk(chunks=self.chunk3D)
             max_temp=max_temp.rechunk(chunks=self.chunk3D)
@@ -175,12 +181,12 @@ class ClimateRegime(object):
             lat_delay=self.latitude.to_delayed()
             elev_delay=self.elevation.to_delayed()  
 
+            ### CALCULATE PET_DAILY ###
             print('in ClimateRegime, computing chunk_shapes in parallel')
             chunk_shapes=dask.compute([chunk.shape for chunk in tmn_delay.ravel()])
             zipvars=zip(chunk_shapes[0][:],lat_delay.ravel(),elev_delay.ravel(),tmn_delay.ravel(),tmx_delay.ravel(),wind_delay.ravel(),srad_delay.ravel(),rh_delay.ravel())
             obj_eto=ETOCalc.ETOCalc() # less copying of variables to save RAM
             task_list=[dask.delayed(obj_eto.calculateETO)(self.doy_start,self.doy_end,cshape,lat,el,tmn,tmx,u,srad,rh) for cshape,lat,el,tmn,tmx,u,srad,rh in zipvars]
-
             print('in ClimateRegime, computing pet_daily in parallel')
             result_chunks=dask.compute(*task_list)
             self.pet_daily=np.concatenate(result_chunks,axis=1)                                         
@@ -196,31 +202,59 @@ class ClimateRegime(object):
             obj_eto=ETOCalc.ETOCalc()
             self.pet_daily= obj_eto.calculateETO(self.doy_start,self.doy_end,min_temp.shape,self.latitude,self.elevation,min_temp,max_temp,wind_speed,short_rad,rel_humidity)
 
-
+        ### CALCULATE MEANT_DAILY ###
         self.meanT_daily = 0.5*(min_temp + max_temp)  #KLG
+        
+        obj_utilities = UtilitiesCalc.UtilitiesCalc(self.chunk2D,self.chunk3D)  #KLG
 
         # sea level temperature
         # P over PET ratio (to eliminate nan in the result, nan is replaced with zero)
         if self.parallel:
+            ### CALCULATE MEANT_MONTHLY_SEALEVEL
             # we only ever use monthly mean sea level so it's pointless to carry daily data in RAM
-            obj_utilities = UtilitiesCalc.UtilitiesCalc(self.chunk2D,self.chunk3D)  #KLG
             meanT_daily_sealevel = self.meanT_daily + (da.tile(self.elevation[:,:,np.newaxis],(1,1,self.doy_end)).rechunk(chunks=self.chunk3D)/100*0.55)
             self.meanT_monthly_sealevel = obj_utilities.averageDailyToMonthly(meanT_daily_sealevel)  #KLG
             del meanT_daily_sealevel
+            if self.set_mask:
+                self.meanT_monthly_sealevel = np.where(mask_monthly,np.float32(self.meanT_monthly_sealevel),np.float32(np.nan))
             
-            # np.seterr won't catch the div 0 and invalid warnings on dask arrays
-            precipitation=precipitation.rechunk(chunks=self.chunk3D)  # set chunks
-            nanzero_mask=da.where((self.pet_daily==0)|(~np.isfinite(self.pet_daily)),0,1).astype('int')  # find where pet_daily equals zero or nan, these location should be nan in P_by_PET_daily
-            pet_daily=np.where(nanzero_mask,self.pet_daily,1)  # local variable with no zero or nan
-            self.P_by_PET_daily = precipitation / pet_daily  # division without zero or nan warnings
-            self.P_by_PET_daily = da.where(nanzero_mask,self.P_by_PET_daily,np.nan).astype('float32') # put the nans back
+            ### CALCULATE P_BY_PET_MONTHLY ####
+            # same for P_by_PET_monthly, we only use monthly
+            # delay input data chunks
+            pr_delayed=precipitation.rechunk(chunks=self.chunk3D).to_delayed().ravel()
+            pet_delayed=[]
+            for arr in result_chunks:
+                pet_delayed.append(dask.delayed(arr))
+            mask_delayed=self.im_mask.to_delayed().ravel()
+
+            def calc_P_by_PET_monthly(pet,pr,mask,obj_util):
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    pet=np.where(pet==0,np.float32(np.nan),np.float32(pet)) # replace inf in the P_by result with nan
+                    P_by_PET_daily = pr/pet # daily values
+                    P_by_PET_monthly = obj_util.averageDailyToMonthly(P_by_PET_daily)  # monthly values
+                    mask=np.tile(mask[:,:,np.newaxis],(1,1,12)) # mask with matching dims
+                    P_by_PET_monthly = np.where(mask,np.float32(P_by_PET_monthly),np.float32(np.nan)) # implement mask
+                return P_by_PET_monthly
+            
+            # compute in parallel on chunks
+            task_list=[dask.delayed(calc_P_by_PET_monthly)(pet_chunk,pr_chunk,mask_chunk,obj_utilities) for pet_chunk,pr_chunk,mask_chunk in zip(pr_delayed,pet_delayed,mask_delayed)]
+            results=dask.compute(*task_list)
+            # concatenate chunks
+            self.P_by_PET_monthly=np.concatenate(results,axis=1) 
+            del results,result_chunks
+
+            # nanzero_mask=da.where((self.pet_daily==0)|(~np.isfinite(self.pet_daily)),0,1).astype('int')  # find where pet_daily equals zero or nan, these location should be nan in P_by_PET_daily
+            # pet_daily=np.where(nanzero_mask,self.pet_daily,1)  # local variable with no zero or nan
+            # self.P_by_PET_daily = precipitation / pet_daily  # division without zero or nan warnings
+            # self.P_by_PET_daily = da.where(nanzero_mask,self.P_by_PET_daily,np.nan).astype('float32') # put the nans back
             # print(psutil.virtual_memory().free/1E9)
-            del nanzero_mask,pet_daily
+            # del nanzero_mask,pet_daily
         else:
-            obj_utilities = UtilitiesCalc.UtilitiesCalc(self.chunk2D,self.chunk3D)  #KLG
             meanT_daily_sealevel = self.meanT_daily + np.expand_dims(self.elevation/100*0.55,axis=2) # automatic broadcasting #KLG   
             self.meanT_monthly_sealevel = obj_utilities.averageDailyToMonthly(meanT_daily_sealevel)  #KLG
             del meanT_daily_sealevel
+            if self.set_mask:
+                self.meanT_monthly_sealevel = np.where(mask_monthly,np.float32(self.meanT_monthly_sealevel),np.float32(np.nan))            
 
             with np.errstate(invalid='ignore',divide='ignore'):
                 self.P_by_PET_daily = np.nan_to_num(precipitation / self.pet_daily)
@@ -241,22 +275,32 @@ class ClimateRegime(object):
         # obj_utilities = UtilitiesCalc.UtilitiesCalc(self.chunk2D,self.chunk3D)  #KLG
         # self.interp_daily_temp=obj_utilities.smoothDailyTemp(self.doy_start,self.doy_end, mask, self.meanT_daily)
 
+        ### SET DAILY VARIABLES TO CLASS OBJECT ###
         self.maxT_daily = max_temp
         self.totalPrec_daily = precipitation  #KLG
         del precipitation
 
+        ### CALCULATE MONTHLY AND ANNUAL MEANS ###
         # adding other small things to RAM so save compute time later
         # monthly mean T
-        obj_utilities = UtilitiesCalc.UtilitiesCalc(self.chunk2D,self.chunk3D)  #KLG        
+        # obj_utilities = UtilitiesCalc.UtilitiesCalc(self.chunk2D,self.chunk3D)  #KLG        
         self.meanT_monthly = obj_utilities.averageDailyToMonthly(self.meanT_daily)
+        # monthly mean precip
+        self.totalPrec_monthly = obj_utilities.averageDailyToMonthly(self.totalPrec_daily) 
+        if self.set_mask:
+            if self.parallel:
+                mask=np.tile(self.im_mask.compute()[:,:,np.newaxis],(1,1,12)) # mask with matching dims
+            else:
+                mask=np.tile(self.im_mask[:,:,np.newaxis],(1,1,12)) # mask with matching dims
+            self.meanT_monthly=np.where(mask,np.float32(self.meanT_monthly),np.float32(np.nan))
+            self.totalPrec_monthly=np.where(mask,np.float32(self.totalPrec_monthly),np.float32(np.nan))
+        
         # annual mean T
         if self.parallel:
             print('in ClimateRegime, computing annual_Tmean in parallel')
             self.annual_Tmean = np.mean(self.meanT_daily, axis = 2).compute()
         else:
             self.annual_Tmean = np.mean(self.meanT_daily, axis = 2)
-        # monthly mean precip
-        self.totalPrec_monthly = obj_utilities.averageDailyToMonthly(self.totalPrec_daily)
         # annual mean T
         if self.parallel:
             print('in ClimateRegime, computing annual_accPrec in parallel')
@@ -284,15 +328,16 @@ class ClimateRegime(object):
         print('converting to monthly')
         # converting daily to monthly  #KLG
         # everything returned in memory as numpy arrays
-        obj_utilities = UtilitiesCalc.UtilitiesCalc(self.chunk2D,self.chunk3D)  #KLG
+        # obj_utilities = UtilitiesCalc.UtilitiesCalc(self.chunk2D,self.chunk3D)  #KLG
         # print('computing meanT_monthly_sealevel')
         # meanT_monthly_sealevel = obj_utilities.averageDailyToMonthly(self.meanT_daily_sealevel)  #KLG
         meanT_monthly_sealevel=self.meanT_monthly_sealevel
         # print('computing meanT_monthly')
         # meanT_monthly = obj_utilities.averageDailyToMonthly(self.meanT_daily)  #KLG
         meanT_monthly=self.meanT_monthly        
-        print('computing P_by_PET_monthly')
-        P_by_PET_monthly = obj_utilities.averageDailyToMonthly(self.P_by_PET_daily)  #KLG
+        # print('computing P_by_PET_monthly')
+        # P_by_PET_monthly = obj_utilities.averageDailyToMonthly(self.P_by_PET_daily)  #KLG
+        P_by_PET_monthly=self.P_by_PET_monthly
 
         print('preparing .where inputs')
         # things we need to assign thermal_climate values  #KLG
@@ -844,66 +889,15 @@ class ClimateRegime(object):
 
         Returns:
            2D NumPy: Length of Growing Period
-        """        
+        """   
         #============================
-        kc_list = np.array([0.0, 0.1, 0.2, 0.5, 1.0])
-        #============================
-        Txsnm = 0.  # Txsnm - snow melt temperature threshold
-        Fsnm = 5.5  # Fsnm - snow melting coefficient
-        # Sb_old = 0.
-        # Wb_old = 0.
-        # Sb_old = np.zeros((self.im_height,self.im_width),dtype='float32')  #KLG
-        # Wb_old = np.zeros((self.im_height,self.im_width),dtype='float32')  #KLG       
-        Sb_old = da.zeros((self.im_height,self.im_width),chunks=self.chunk2D,dtype='float32')  #KLG
-        Wb_old = da.zeros((self.im_height,self.im_width),chunks=self.chunk2D,dtype='float32')  #KLG  
-        #============================
-        timechunks=(1,-1,self.chunk3D[1])
-        Tx365 = self.maxT_daily.transpose((2,0,1)).rechunk(chunks=timechunks).blocks.ravel()
-        Ta365 = self.meanT_daily.transpose((2,0,1)).rechunk(chunks=timechunks).blocks.ravel()
-        Pcp365 = self.totalPrec_daily.transpose((2,0,1)).rechunk(chunks=timechunks).blocks.ravel()
-        # self.Eto365 = self.pet_daily.copy()  # Eto
-        # self.Etm365 = np.zeros(Tx365.shape)
-        # self.Eta365 = np.zeros(Tx365.shape)
-        # self.Sb365 = np.zeros(Tx365.shape)
-        # self.Wb365 = np.zeros(Tx365.shape)
-        # self.Wx365 = np.zeros(Tx365.shape)
-        # self.kc365 = np.zeros(Tx365.shape)
-        # self.Etm365 = np.empty(Tx365.shape)  #KLG
-        # self.Eta365 = np.empty(Tx365.shape)  #KLG
-        self.Etm365 = np.empty(self.meanT_daily.shape,dtype='float32')  #KLG
-        self.Eta365 = np.empty(self.meanT_daily.shape,dtype='float32')  #KLG        
-        # self.Sb365 = np.empty(Tx365.shape)  #KLG
-        # self.Wb365 = np.empty(Tx365.shape)  #KLG
-        # self.Wx365 = np.empty(Tx365.shape)  #KLG
-        # self.kc365 = np.empty(Tx365.shape)  #KLG
-        # self.Etm365[:],self.Eta365[:],self.Wb365[:],self.Wx365[:],self.Sb365[:],self.kc365[:]=np.nan,np.nan,np.nan,np.nan,np.nan,np.nan  #KLG
-        self.Etm365[:],self.Eta365[:]=np.nan,np.nan
-
-        # meanT_daily_new = np.zeros(Tx365.shape)
-        # self.maxT_daily_new = np.zeros(Tx365.shape)
-        # lgp_tot = np.zeros((self.im_height, self.im_width))
-        #============================
-
-        # if self.parallel:
-        #     print('in ClimateRegime, computing Tx365 in parallel')
-        #     Tx365=Tx365.compute()  # convert dask to numpy
-        #     print('in ClimateRegime, computing Ta365 in parallel')
-        #     Ta365=Ta365.compute()  # convert dask to numpy
-        #     print('in ClimateRegime, computing Pcp355 in parallel')
-        #     Pcp365=Pcp365.compute()  # convert dask to numpy           
-        
-        # things we can pull out of the slow loops  #KLG        
-        # lgpt5 = self.lgpt5  #KLG
-        lgpt5=da.from_array(self.lgpt5,chunks=self.chunk2D)
-        # totalPrec_monthly = UtilitiesCalc.UtilitiesCalc(self.chunk2D,self.chunk3D).averageDailyToMonthly(self.totalPrec_daily)  #KLG
-        # totalPrec_monthly=self.totalPrec_monthly
+        ### CALCULATE ISTART0,ISTART1 ###
         
         # create delayed chunks
+        lgpt5_delayed=da.from_array(self.lgpt5,chunks=self.chunk2D).to_delayed().ravel()
         meanT_delayed=self.meanT_daily.to_delayed().ravel()
-        lgpt5_delayed=lgpt5.to_delayed().ravel()
-        # create list of delayed compute tasks
+        # create list of delayed compute tasks on array chunks and then compute
         task_list=[dask.delayed(LGPCalc.rainPeak)(meanT_chunk,lgp_chunk) for meanT_chunk,lgp_chunk in zip(meanT_delayed,lgpt5_delayed)]
-        # compute
         results_list=dask.compute(*task_list)
         # separate results into lists of chunks
         istart0_chunks=[]
@@ -912,49 +906,79 @@ class ClimateRegime(object):
             istart0_chunks.append(results_list[c][0])
             istart1_chunks.append(results_list[c][1])
         # concatenate to numpy array
-        istart0=np.concatenate(istart0_chunks,axis=1)
-        istart1=np.concatenate(istart1_chunks,axis=1)
+        istart0_delayed=dask.delayed(np.concatenate(istart0_chunks,axis=1))
+        istart1_delayed=dask.delayed(np.concatenate(istart1_chunks,axis=1))
         # clean up
-        del meanT_delayed,lgpt5_delayed,results_list,istart0_chunks,istart1_chunks         
+        del meanT_delayed,lgpt5_delayed,results_list#,istart0_chunks,istart1_chunks    
 
+        #============================
+        ### SET UP INPUTS TO THE DAY LOOP ###
+        ### ALL INPUTS ARE DELAYED OBJECTS OF SHAPE (NY,NX) OR CONSTANTS ###
+        kc_list = np.array([0.0, 0.1, 0.2, 0.5, 1.0])
+        Txsnm = 0.  # Txsnm - snow melt temperature threshold
+        Fsnm = 5.5  # Fsnm - snow melting coefficient
+        # Sb_old = np.zeros((self.im_height,self.im_width),dtype='float32')  #KLG
+        # Wb_old = np.zeros((self.im_height,self.im_width),dtype='float32')  #KLG    
+        # lgpt5_delayed=dask.delayed(self.lgpt5)   
+        Sb_old = da.zeros((self.im_height,self.im_width),chunks=self.chunk2D,dtype='float32')  #KLG
+        Wb_old = da.zeros((self.im_height,self.im_width),chunks=self.chunk2D,dtype='float32')  #KLG 
+        lgpt5_delayed=da.from_array(self.lgpt5,chunks=self.chunk2D).blocks.ravel()  
+        timechunks=(1,-1,self.chunk3D[1])
+        Tx365_timechunked = self.maxT_daily.transpose((2,0,1)).rechunk(chunks=timechunks).blocks.ravel()
+        Ta365_timechunked = self.meanT_daily.transpose((2,0,1)).rechunk(chunks=timechunks).blocks.ravel()
+        Pcp365_timechunked = self.totalPrec_daily.transpose((2,0,1)).rechunk(chunks=timechunks).blocks.ravel()
+        # timechunks=(1,-1,-1) # move time to the first dimension
+        # Tx365_timechunked = self.maxT_daily.transpose((2,0,1)).rechunk(chunks=timechunks).blocks.ravel()
+        # Ta365_timechunked = self.meanT_daily.transpose((2,0,1)).rechunk(chunks=timechunks).blocks.ravel()
+        # Pcp365_timechunked = self.totalPrec_daily.transpose((2,0,1)).rechunk(chunks=timechunks).blocks.ravel()
+        # arrays to hold the outputs
+        self.Etm365 = np.empty(self.meanT_daily.shape,dtype='float32')  #KLG
+        self.Eta365 = np.empty(self.meanT_daily.shape,dtype='float32')  #KLG        
+        self.Etm365[:],self.Eta365[:]=np.nan,np.nan  
+        # mask       
+        if self.set_mask:
+            if self.parallel:
+                print('in ClimateRegime, computing mask in parallel')
+                # mask_delayed=dask.delayed(self.im_mask.compute())
+                mask_delayed=self.im_mask.compute()
+            else:
+                mask_delayed=dask.delayed(self.im_mask)
+        else:
+            mask_delayed=dask.delayed(np.ones((self.im_height,self.im_width),dtype='int'))
 
+        pet_timechunked=da.from_array(self.pet_daily.transpose((2,0,1))).rechunk(chunks=timechunks).blocks.ravel()
+        task_list = [dask.delayed(LGPCalc.psh)(np.zeros((self.im_height,self.im_width),dtype='float32'),pet) for pet in pet_timechunked]   #KLG            
+        p_chunks=dask.compute(*task_list)
+        p_delayed=[dask.delayed(arr) for arr in p_chunks]
+        del p_chunks
         # p = LGPCalc.psh(np.zeros(self.pet_daily.shape,dtype='float32'), self.pet_daily)   #KLG
 
-        # eliminate all but the time loop  #KLG
-        if self.set_mask:
-            # if self.parallel:
-            #     print('in ClimateRegime, computing mask in parallel')
-            #     mask=self.im_mask.compute()
-            # else:
-            mask=self.im_mask
-        else:
-            mask=np.ones((self.im_height,self.im_width),dtype='int')
         #### NEXT STEP #################
         ###### MANUALLY CHUNK PET_DAILY, P, ISTART0, ISTART1 TO DELAYED CHUNKS
         for idoy in range(self.doy_start-1, self.doy_end):  #KLG
-            p = LGPCalc.psh(np.zeros(self.pet_daily[:,:,idoy].shape,dtype='float32'),self.pet_daily[:,:,idoy])   #KLG
-
-            istart=self.nchunks*idoy
-            iend=istart+self.nchunks
+            print('in ClimateRegime, computing ET components for day',idoy+1)
+        # for idoy in range(0,2):  #KLG
+            # istart=self.nchunks*idoy
+            # iend=istart+self.nchunks
             # Eta_new, Etm_new, Wb_new, Wx_new, Sb_new, kc_new = LGPCalc.EtaCalc(
             Eta_new, Etm_new, Wb_new, Sb_new = LGPCalc.EtaCalc(
-                                    mask,
-                                    Tx365[istart:iend], 
-                                    Ta365[istart:iend],
-                                    Pcp365[istart:iend], 
+                                    mask_delayed,
+                                    Tx365_timechunked[idoy], 
+                                    Ta365_timechunked[idoy],
+                                    Pcp365_timechunked[idoy], 
                                     Txsnm, 
                                     Fsnm, 
-                                    self.pet_daily[:,:,idoy],
+                                    pet_timechunked[idoy],
                                     Wb_old, 
                                     Sb_old, 
                                     idoy, 
-                                    istart0, 
-                                    istart1,
+                                    istart0_delayed, 
+                                    istart1_delayed,
                                     Sa, 
                                     D, 
-                                    p, 
+                                    p_delayed[idoy], 
                                     kc_list, 
-                                    lgpt5)  #KLG            
+                                    lgpt5_delayed)  #KLG            
 
             self.Eta365[:,:,idoy]=Eta_new  #KLG
             self.Etm365[:,:,idoy]=Etm_new  #KLG
@@ -993,7 +1017,7 @@ class ClimateRegime(object):
         #     return np.where(mask, lgp_tot.astype('float32'), np.nan)  #KLG
         # else:
         #     return lgp_tot.astype('float32')  #KLG
-        return istart0,istart1
+        return eta_class
   
     def getLGPClassified(self, lgp): # Original PyAEZ source code
         """This function calculates the classification of moisture regime using LGP.

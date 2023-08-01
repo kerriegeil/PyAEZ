@@ -56,7 +56,7 @@ class UtilitiesCalc(object):
 
         return daily_vector
 
-    def averageDailyToMonthly(self, daily_arr):
+    def averageDailyToMonthly(self,daily_arr):
     # def averageDailyToMonthly(self, daily_vector):
         """Aggregating daily data into monthly data
 
@@ -84,6 +84,7 @@ class UtilitiesCalc(object):
         if self.parallel:
             # delay the input data so it's copied once instead of at each call of the function
             daily_arr=dask.delayed(daily_arr)
+            # daily_arr=daily_arr.to_delayed()
 
             # a nested ordered dictionary containing info for each month
             month_info = OrderedDict({ 'Jan': {'ndays':31,'lim_lo':0,'lim_hi':31},
@@ -103,7 +104,7 @@ class UtilitiesCalc(object):
             @dask.delayed
             def monthly_aggregate(daily,ndays,lim_lo,lim_hi):
                 # with np.errstate(invalid='ignore',divide='ignore'):
-                monthly=daily[:,:,lim_lo:lim_hi].sum(axis=2)/ndays
+                monthly=np.nansum(daily[:,:,lim_lo:lim_hi],axis=2,dtype='float32')/ndays
                 return monthly
 
             # in a regular non-delayed loop, call delayed function and compile list of future compute tasks
