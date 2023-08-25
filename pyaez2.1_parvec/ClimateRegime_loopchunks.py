@@ -18,6 +18,7 @@ import dask.array as da
 import dask
 import warnings
 from time import time as timer
+from dask.distributed import Client,LocalCluster
 
 
 
@@ -25,7 +26,7 @@ from time import time as timer
 
 # Initiate ClimateRegime Class instance
 class ClimateRegime(object):
-    def setParallel(self,var3D,parallel=False,nchunks=None):
+    def setParallel(self,var3D,parallel=False,nchunks=None,reduce_mem_used=False):
         # if ~nchunks:
         #     nchunks=UtilitiesCalc.UtilitiesCalc().getChunks()
 
@@ -33,7 +34,7 @@ class ClimateRegime(object):
             self.parallel=True
 
             # we parallelize by chunking longitudes
-            self.chunk2D,self.chunk3D,self.chunksize3D_MB,self.nchunks=UtilitiesCalc.UtilitiesCalc().setChunks(nchunks,var3D.shape)
+            self.chunk2D,self.chunk3D,self.chunksize3D_MB,self.nchunks=UtilitiesCalc.UtilitiesCalc().setChunks(nchunks,var3D.shape,reduce_mem_used)
             # =var3D.nbytes/1E6/nchunks   # allow user to see the chunksize in MB   
             # self.nchunks=nchunks        
         else:
@@ -74,7 +75,7 @@ class ClimateRegime(object):
             admin_mask (2D NumPy/Binary): mask to extract only region of interest
             no_data_value (int): pixels with this value will be omitted during PyAEZ calculations
         """    
-        self.im_mask = admin_mask.rechunk(chunks=self.chunk2D)
+        self.im_mask = admin_mask.rechunk(chunks=self.chunk2D).astype('int8')
         self.nodata_val = no_data_value
         self.set_mask = True
 
@@ -149,55 +150,64 @@ class ClimateRegime(object):
             wind_speed (3D NumPy): Daily windspeed at 2m altitude [m/s]
             rel_humidity (3D NumPy): Daily relative humidity [percentage decimal, 0-1]
         """
+        # cluster=LocalCluster(n_workers=1, threads_per_worker=20)
+        # client=Client(cluster)
+
         self.doy_start=1  #KLG
         self.doy_end=min_temp.shape[2]  #KLG
 
-        if self.set_mask:
-            if self.parallel:
-                mask_monthly=np.tile(self.im_mask.compute()[:,:,np.newaxis],(1,1,12)) # mask with matching dims
-            else:
-                mask_monthly=np.tile(self.im_mask[:,:,np.newaxis],(1,1,12)) # mask with matching dims      
+        # if self.set_mask:
+        #     if self.parallel:
+        #         mask_monthly=np.tile(self.im_mask.compute()[:,:,np.newaxis],(1,1,12)) # mask with matching dims
+        #     else:
+        #         mask_monthly=np.tile(self.im_mask[:,:,np.newaxis],(1,1,12)) # mask with matching dims      
 
         if self.parallel:
             min_temp=min_temp.rechunk(chunks=self.chunk3D)
             max_temp=max_temp.rechunk(chunks=self.chunk3D)
-            tmn_delay=min_temp.to_delayed()
-            tmx_delay=max_temp.to_delayed()
+            tmn_delay=min_temp.to_delayed().ravel()
+            tmx_delay=max_temp.to_delayed().ravel()
 
             short_rad=short_rad.rechunk(chunks=self.chunk3D) # chunk
             short_rad=da.where(short_rad < 0, 0, short_rad)  # elim negatives
-            short_rad = (short_rad*3600.*24.)/1000000.       # convert units
-            srad_delay=short_rad.to_delayed()
-            del short_rad   
+            short_rad = short_rad*0.0864 #(3600.*24./1000000.)       # convert units
+            srad_delay=short_rad.to_delayed().ravel()
+            # del short_rad   
 
             wind_speed=wind_speed.rechunk(chunks=self.chunk3D)     # chunk
             wind_speed=da.where(wind_speed < 0.5, 0.5, wind_speed) # elim negative and small values
-            wind_delay=wind_speed.to_delayed() 
+            wind_delay=wind_speed.to_delayed().ravel() 
 
             rel_humidity=rel_humidity.rechunk(chunks=self.chunk3D)        # chunk
             rel_humidity=da.where(rel_humidity > 0.99, 0.99,rel_humidity) # elim high values
             rel_humidity=da.where(rel_humidity < 0.05, 0.05,rel_humidity) # elim low values
-            rh_delay=rel_humidity.to_delayed()
-            del rel_humidity  
+            rh_delay=rel_humidity.to_delayed().ravel()
+            # del rel_humidity  
 
-            lat_delay=self.latitude.to_delayed()
-            elev_delay=self.elevation.to_delayed()  
+            lat_delay=self.latitude.to_delayed().ravel()
+            elev_delay=self.elevation.to_delayed().ravel()  
 
             ### CALCULATE PET_DAILY ###
-            print('in ClimateRegime, computing chunk_shapes in parallel')
-            chunk_shapes=dask.compute([chunk.shape for chunk in tmn_delay.ravel()])
-            zipvars=zip(chunk_shapes[0][:],lat_delay.ravel(),elev_delay.ravel(),tmn_delay.ravel(),tmx_delay.ravel(),wind_delay.ravel(),srad_delay.ravel(),rh_delay.ravel())
+            # print('in ClimateRegime, computing chunk_shapes in parallel')
+            # chunk_shapes=dask.compute([chunk.shape for chunk in tmn_delay])
+            # zipvars=zip(chunk_shapes[0][:],lat_delay,elev_delay,tmn_delay,tmx_delay,wind_delay,srad_delay,rh_delay)
+            zipvars=zip(lat_delay,elev_delay,tmn_delay,tmx_delay,wind_delay,srad_delay,rh_delay)
             obj_eto=ETOCalc.ETOCalc() # less copying of variables to save RAM
-            task_list=[dask.delayed(obj_eto.calculateETO)(self.doy_start,self.doy_end,cshape,lat,el,tmn,tmx,u,srad,rh) for cshape,lat,el,tmn,tmx,u,srad,rh in zipvars]
+            # task_list=[dask.delayed(obj_eto.calculateETO)(self.doy_start,self.doy_end,cshape,lat,el,tmn,tmx,u,srad,rh) for cshape,lat,el,tmn,tmx,u,srad,rh in zipvars]
+            task_list=[dask.delayed(obj_eto.calculateETO)(self.doy_start,self.doy_end,lat,el,tmn,tmx,u,srad,rh) for lat,el,tmn,tmx,u,srad,rh in zipvars]
             print('in ClimateRegime, computing pet_daily in parallel')
             result_chunks=dask.compute(*task_list)
-            self.pet_daily=np.concatenate(result_chunks,axis=1)                                         
-
+            self.pet_daily=np.concatenate(result_chunks,axis=1) 
+            # print(psutil.virtual_memory().free/1E9)
+            # self.pet_daily=da.concatenate(result_chunks,axis=1)                                        
+            # print(psutil.virtual_memory().free/1E9)
+            del result_chunks,tmn_delay,tmx_delay,srad_delay,short_rad,wind_delay,wind_speed,rh_delay,rel_humidity,lat_delay,elev_delay,zipvars,task_list
+            # print(psutil.virtual_memory().free/1E9)
         else:
             rel_humidity[rel_humidity > 0.99] = 0.99
             rel_humidity[rel_humidity < 0.05] = 0.05
             short_rad[short_rad < 0] = 0
-            short_rad = (short_rad*3600.*24.)/1000000.
+            short_rad = short_rad*0.0864 #3600.*24./1000000.
             # wind_speed[wind_speed < 0] = 0
             wind_speed[wind_speed < 0.5] = 0.5
             
@@ -214,36 +224,56 @@ class ClimateRegime(object):
         if self.parallel:
             ### CALCULATE MEANT_MONTHLY_SEALEVEL
             # we only ever use monthly mean sea level so it's pointless to carry daily data in RAM
-            meanT_daily_sealevel = self.meanT_daily + (da.tile(self.elevation[:,:,np.newaxis],(1,1,self.doy_end)).rechunk(chunks=self.chunk3D)/100*0.55)
+            # print(self.im_height,self.im_width,self.doy_end,self.chunk3D)
+            meanT_daily_sealevel = self.meanT_daily + (da.broadcast_to(self.elevation.compute()[:,:,np.newaxis],(self.im_height,self.im_width,self.doy_end)).rechunk(chunks=self.chunk3D)/100*0.55)
+            print('in ClimateRegime, agg daily to meanT_monthly_sealevel in parallel')
             self.meanT_monthly_sealevel = obj_utilities.averageDailyToMonthly(meanT_daily_sealevel)  #KLG
             del meanT_daily_sealevel
             if self.set_mask:
+                mask_monthly=np.broadcast_to(self.im_mask.compute()[:,:,np.newaxis],(self.im_height,self.im_width,12))
                 self.meanT_monthly_sealevel = np.where(mask_monthly,np.float32(self.meanT_monthly_sealevel),np.float32(np.nan))
             
             ### CALCULATE P_BY_PET_MONTHLY ####
             # same for P_by_PET_monthly, we only use monthly
             # delay input data chunks
             pr_delayed=precipitation.rechunk(chunks=self.chunk3D).to_delayed().ravel()
-            pet_delayed=[]
-            for arr in result_chunks:
-                pet_delayed.append(dask.delayed(arr))
-            mask_delayed=self.im_mask.to_delayed().ravel()
+            pet_delayed=da.from_array(self.pet_daily,chunks=self.chunk3D).to_delayed().ravel()
+            mask_delayed=da.broadcast_to(self.im_mask[:,:,np.newaxis],(self.im_height,self.im_width,12),chunks=(self.chunk2D[0],self.chunk2D[1],12)).to_delayed().ravel()
+
+            # print(precipitation.rechunk(chunks=self.chunk3D))
+            # print(da.from_array(self.pet_daily,chunks=self.chunk3D))
+            # print(da.broadcast_to(self.im_mask[:,:,np.newaxis],(self.im_height,self.im_width,12),chunks=(self.chunk2D[0],self.chunk2D[1],12)))
 
             def calc_P_by_PET_monthly(pet,pr,mask,obj_util):
                 with np.errstate(divide='ignore', invalid='ignore'):
                     pet=np.where(pet==0,np.float32(np.nan),np.float32(pet)) # replace inf in the P_by result with nan
                     P_by_PET_daily = pr/pet # daily values
+                    # print('sending to Utilities, agg P_by_PET daily to monthly in parallel')
                     P_by_PET_monthly = obj_util.averageDailyToMonthly(P_by_PET_daily)  # monthly values
-                    mask=np.tile(mask[:,:,np.newaxis],(1,1,12)) # mask with matching dims
+                    # mask=da.broadcast_to(mask[:,:,np.newaxis],(mask.shape[0],mask.shape[1],12)) # mask with matching dims
                     P_by_PET_monthly = np.where(mask,np.float32(P_by_PET_monthly),np.float32(np.nan)) # implement mask
                 return P_by_PET_monthly
             
             # compute in parallel on chunks
             task_list=[dask.delayed(calc_P_by_PET_monthly)(pet_chunk,pr_chunk,mask_chunk,obj_utilities) for pet_chunk,pr_chunk,mask_chunk in zip(pr_delayed,pet_delayed,mask_delayed)]
+            print('in ClimateRegime, computing P_by_PET in parallel')
             results=dask.compute(*task_list)
             # concatenate chunks
             self.P_by_PET_monthly=np.concatenate(results,axis=1) 
-            del results,result_chunks
+            del results,task_list,pr_delayed,pet_delayed,mask_delayed
+
+            # pr=precipitation.rechunk(chunks=self.chunk3D)
+            # pet=da.from_array(self.pet_daily,chunks=self.chunk3D)
+            # mask_3D=da.broadcast_to(self.im_mask[:,:,np.newaxis],(self.im_height,self.im_width,12),chunks=(self.chunk2D[0],self.chunk2D[1],12))
+            # with np.errstate(divide='ignore', invalid='ignore'):
+            #     pet=da.where(pet==0,np.float32(np.nan),np.float32(pet))
+            #     P_by_PET_daily = pr/pet
+            #     print('sending to Utilities, agg P_by_PET daily to monthly in parallel')
+            #     P_by_PET_monthly = obj_utilities.averageDailyToMonthly(P_by_PET_daily)
+            #     P_by_PET_monthly = da.where(mask_3D,np.float32(P_by_PET_monthly),np.float32(np.nan))
+            # self.P_by_PET_monthly=P_by_PET_monthly.compute()
+
+            # del mask_3D,pet,P_by_PET_daily,P_by_PET_monthly            
 
             # nanzero_mask=da.where((self.pet_daily==0)|(~np.isfinite(self.pet_daily)),0,1).astype('int')  # find where pet_daily equals zero or nan, these location should be nan in P_by_PET_daily
             # pet_daily=np.where(nanzero_mask,self.pet_daily,1)  # local variable with no zero or nan
@@ -252,10 +282,12 @@ class ClimateRegime(object):
             # print(psutil.virtual_memory().free/1E9)
             # del nanzero_mask,pet_daily
         else:
+            ###### FIX THIS PART #######
             meanT_daily_sealevel = self.meanT_daily + np.expand_dims(self.elevation/100*0.55,axis=2) # automatic broadcasting #KLG   
             self.meanT_monthly_sealevel = obj_utilities.averageDailyToMonthly(meanT_daily_sealevel)  #KLG
             del meanT_daily_sealevel
             if self.set_mask:
+                mask_monthly=np.broadcast_to(self.im_mask[:,:,np.newaxis],(self.im_height,self.im_width,12))
                 self.meanT_monthly_sealevel = np.where(mask_monthly,np.float32(self.meanT_monthly_sealevel),np.float32(np.nan))            
 
             with np.errstate(invalid='ignore',divide='ignore'):
@@ -280,35 +312,48 @@ class ClimateRegime(object):
         ### SET DAILY VARIABLES TO CLASS OBJECT ###
         self.maxT_daily = max_temp
         self.totalPrec_daily = precipitation.rechunk(chunks=self.chunk3D)  #KLG
-        del precipitation
+        # del precipitation
 
         ### CALCULATE MONTHLY AND ANNUAL MEANS ###
         # adding other small things to RAM so save compute time later
         # monthly mean T
-        # obj_utilities = UtilitiesCalc.UtilitiesCalc(self.chunk2D,self.chunk3D)  #KLG        
+        # obj_utilities = UtilitiesCalc.UtilitiesCalc(self.chunk2D,self.chunk3D)  #KLG   
+        print('in ClimateRegime, computing meanT_monthly, totalPrec_monthly')     
         self.meanT_monthly = obj_utilities.averageDailyToMonthly(self.meanT_daily)
         # monthly mean precip
         self.totalPrec_monthly = obj_utilities.averageDailyToMonthly(self.totalPrec_daily) 
         if self.set_mask:
             if self.parallel:
-                mask=np.tile(self.im_mask.compute()[:,:,np.newaxis],(1,1,12)) # mask with matching dims
+                mask_monthly=np.broadcast_to(self.im_mask.compute()[:,:,np.newaxis],(self.im_height,self.im_width,12))
+                # mask=np.tile(self.im_mask.compute()[:,:,np.newaxis],(1,1,12)) # mask with matching dims
             else:
-                mask=np.tile(self.im_mask[:,:,np.newaxis],(1,1,12)) # mask with matching dims
-            self.meanT_monthly=np.where(mask,np.float32(self.meanT_monthly),np.float32(np.nan))
-            self.totalPrec_monthly=np.where(mask,np.float32(self.totalPrec_monthly),np.float32(np.nan))
+                # mask=np.tile(self.im_mask[:,:,np.newaxis],(1,1,12)) # mask with matching dims
+                mask_monthly=np.broadcast_to(self.im_mask[:,:,np.newaxis],(self.im_height,self.im_width,12))
+
+            self.meanT_monthly=np.where(mask_monthly,np.float32(self.meanT_monthly),np.float32(np.nan))
+            self.totalPrec_monthly=np.where(mask_monthly,np.float32(self.totalPrec_monthly),np.float32(np.nan))
         
         # annual mean T
         if self.parallel:
-            print('in ClimateRegime, computing annual_Tmean in parallel')
-            self.annual_Tmean = np.mean(self.meanT_daily, axis = 2).compute()
+            print('in ClimateRegime, computing annual_Tmean')
+            self.annual_Tmean = da.mean(self.meanT_daily, axis = 2).compute()
+            if self.set_mask:
+                self.annual_Tmean=np.where(self.im_mask.compute(),np.float32(self.annual_Tmean),np.float32(np.nan))            
         else:
             self.annual_Tmean = np.mean(self.meanT_daily, axis = 2)
+            if self.set_mask:
+                self.annual_Tmean=np.where(self.im_mask,np.float32(self.annual_Tmean),np.float32(np.nan))            
+
         # annual mean T
         if self.parallel:
-            print('in ClimateRegime, computing annual_accPrec in parallel')
-            self.annual_accPrec = np.sum(self.totalPrec_daily, axis = 2).compute()
+            print('in ClimateRegime, computing annual_accPrec')
+            self.annual_accPrec = da.sum(self.totalPrec_daily, axis = 2).compute()
+            if self.set_mask:
+                self.annual_accPrec=np.where(self.im_mask.compute(),np.float32(self.annual_accPrec),np.float32(np.nan))               
         else:
-            self.annual_accPrec = np.sum(self.totalPrec_daily, axis = 2)                     
+            self.annual_accPrec = np.sum(self.totalPrec_daily, axis = 2) 
+            if self.set_mask:
+                self.annual_accPrec=np.where(self.im_mask,np.float32(self.annual_accPrec),np.float32(np.nan))                                
         # print(psutil.virtual_memory().free/1E9)        
 
 
@@ -962,84 +1007,167 @@ class ClimateRegime(object):
         # del p_chunks
         # # p = LGPCalc.psh(np.zeros(self.pet_daily.shape,dtype='float32'), self.pet_daily)   #KLG
 
+        # start=timer()
+        # lgpt5=da.from_array(self.lgpt5,chunks=self.chunk2D)
+        # istart0,istart1=LGPCalc.rainPeak(self.meanT_daily,lgpt5)
+        # # task_time=timer()-start
+        # # print('time spent on istart0,istart1',task_time)
 
+        # # start=timer()
+        # # pet_daily=da.from_array(self.pet_daily,chunks=self.chunk3D)
+        # pet_daily=self.pet_daily
+        # # task_time=timer()-start
+        # # print('time spent on converting pet_daily',task_time)
+        # # start=timer()
+        # p = LGPCalc.psh(da.zeros(pet_daily.shape,chunks=self.chunk3D,dtype='float32'), pet_daily)
+        # # task_time=timer()-start
+        # # print('time spent on p',task_time)
+
+        # # start=timer()
+        # ndays=self.maxT_daily.shape[2]
+        # lgpt5_3D=da.tile(self.lgpt5[:,:,np.newaxis],(1,1,ndays)).rechunk(chunks=self.chunk3D) 
+        # mask_3D=da.tile(self.im_mask[:,:,np.newaxis],(1,1,ndays)).rechunk(chunks=self.chunk3D)
+        # # task_time=timer()-start
+        # # print('time spent on 3D vars',task_time)          
+        # # start=timer()
+        # Txsnm = 0. 
+        # eta_class=LGPCalc.Eta_class(mask_3D,lgpt5_3D,self.meanT_daily,self.maxT_daily,Txsnm)
+        # del lgpt5_3D,mask_3D
+        # # task_time=timer()-start
+        # # print('time spent on eta_class',task_time)       
+
+        # islgp=da.where(self.meanT_daily>=5,np.int8(1),np.int8(0))  #KLG
+
+        # # constants
+        # Fsnm = 5.5
+        # kc_list = np.array([0.0, 0.1, 0.2, 0.5, 1.0],dtype='float32')   
+
+        # smallchunk3D=(-1,1,-1)#self.chunk3D#(-1,400,-1)
+        # smallchunk2D=(-1,1)#self.chunk2D#(-1,400)
+        # # 2D chunked inputs
+        # mask_cl=self.im_mask.rechunk(chunks=smallchunk2D).to_delayed().ravel()#.blocks.ravel()
+        # lgpt5_cl = lgpt5.rechunk(chunks=smallchunk2D).to_delayed().ravel()#.blocks.ravel()
+        # istart0_cl = istart0.rechunk(chunks=smallchunk2D).to_delayed().ravel()#.blocks.ravel()
+        # istart1_cl = istart1.rechunk(chunks=smallchunk2D).to_delayed().ravel()#.blocks.ravel()
+        # # Sb_old_cl = da.zeros((self.im_height,self.im_width),chunks=self.chunk2D,dtype='float32')#.to_delayed().ravel()#.blocks.ravel()
+        # # Wb_old_cl = da.zeros((self.im_height,self.im_width),chunks=self.chunk2D,dtype='float32')#.to_delayed().ravel()#.blocks.ravel()         
+        # Sb_old_cl = da.zeros((self.im_height,self.im_width),chunks=smallchunk2D,dtype='float32').to_delayed().ravel()#.blocks.ravel()
+        # Wb_old_cl = da.zeros((self.im_height,self.im_width),chunks=smallchunk2D,dtype='float32').to_delayed().ravel()#.blocks.ravel() 
+
+        # # 3D chunked inputs
+        # Pet365_cl = pet_daily.rechunk(chunks=smallchunk3D).to_delayed().ravel()#.blocks.ravel()
+        # p_cl = p.rechunk(chunks=smallchunk3D).to_delayed().ravel()#.blocks.ravel()
+        # eta_class_cl = eta_class.rechunk(chunks=smallchunk3D).to_delayed().ravel()#.blocks.ravel()
+        # Tx365_cl = self.maxT_daily.rechunk(chunks=smallchunk3D).to_delayed().ravel()#.blocks.ravel()
+        # # Ta365_cl = self.meanT_daily.rechunk(chunks=smallchunk3D).to_delayed().ravel()#.blocks.ravel()
+        # Pcp365_cl = self.totalPrec_daily.rechunk(chunks=smallchunk3D).to_delayed().ravel()#.blocks.ravel()
+        # islgp_cl = islgp.rechunk(chunks=smallchunk3D).to_delayed().ravel()
+
+        # # zip all the chunked variables together
+        # # zipvars=zip(mask_cl, Tx365_cl, Ta365_cl, Pcp365_cl, Pet365_cl, Wb_old_cl, Sb_old_cl, istart0_cl, istart1_cl, p_cl, lgpt5_cl, eta_class_cl)
+        # zipvars=zip(mask_cl, Tx365_cl, islgp_cl, Pcp365_cl, Pet365_cl, Wb_old_cl, Sb_old_cl, istart0_cl, istart1_cl, p_cl, lgpt5_cl, eta_class_cl)
+        # # zipvars=zip(mask_cl[0:2], Tx365_cl[0:2], Ta365_cl[0:2], Pcp365_cl[0:2], Pet365_cl[0:2], Wb_old_cl[0:2], Sb_old_cl[0:2], istart0_cl[0:2], istart1_cl[0:2], p_cl[0:2], lgpt5_cl[0:2], eta_class_cl[0:2])
+        # # print(mask_cl[0])
+        # # print(len(mask_cl), len(Tx365_cl), len(Ta365_cl), len(Pcp365_cl), len(Pet365_cl), len(Wb_old_cl), len(Sb_old_cl), len(istart0_cl), len(istart1_cl), len(p_cl), len(lgpt5_cl), len(eta_class_cl))
+        # # print(len(mask_cl), len(Tx365_cl), len(islgp_cl), len(Pcp365_cl), len(Pet365_cl), len(Wb_old_cl), len(Sb_old_cl), len(istart0_cl), len(istart1_cl), len(p_cl), len(lgpt5_cl), len(eta_class_cl))
+        # task_time=timer()-start
+        # print('time spent on prepping vars',task_time) 
+
+        # start=timer()
+        # # create task_list, one chunk of each arr per task
+        # # task_list=[dask.delayed(LGPCalc.EtaCalc)(mask,Tx365,Ta365,Pcp365,Txsnm,Fsnm,pet365,Wb_old,Sb_old,istart0,istart1,Sa,D,p,kc_list,lgpt5,eclass,self.doy_start,self.doy_end) for mask,Tx365,Ta365,Pcp365,pet365,Wb_old,Sb_old,istart0,istart1,p,lgpt5,eta_class in zipvars]
+        # task_list=[dask.delayed(LGPCalc.EtaCalc, traverse=False)(mask,Tx365,blgp,Pcp365,Txsnm,Fsnm,pet365,Wb_old,Sb_old,s0,s1,Sa,D,p_c,kc_list,lgp,eclass,self.doy_start,self.doy_end) for mask,Tx365,blgp,Pcp365,pet365,Wb_old,Sb_old,s0,s1,p_c,lgp,eclass in zipvars]
+        # print('NUMBER OF TASKS',len(task_list))
+        # task_time=timer()-start
+        # print('time spent building task list',task_time) 
+        # print('free RAM',psutil.virtual_memory().free/1E9)
+        
+        # start=timer()
+        # results=dask.compute(*task_list, traverse=False)
+        # task_time=timer()-start
+        # print('time spent in compute',task_time)    
+        # # print(len(results))
+        # # print(len(results))
+        # # print(results[0].shape)
+        # # test=list(results[0])
+        # # print(test)
 
         start=timer()
-        lgpt5=da.from_array(self.lgpt5,chunks=self.chunk2D)
-        istart0,istart1=LGPCalc.rainPeak(self.meanT_daily,lgpt5)
-        # task_time=timer()-start
-        # print('time spent on istart0,istart1',task_time)
-
-        # start=timer()
-        pet_daily=da.from_array(self.pet_daily,chunks=self.chunk3D)
-        # task_time=timer()-start
-        # print('time spent on converting pet_daily',task_time)
-        # start=timer()
-        p = LGPCalc.psh(da.zeros(pet_daily.shape,chunks=self.chunk3D,dtype='float32'), pet_daily)
-        # task_time=timer()-start
-        # print('time spent on p',task_time)
-
-        # start=timer()
-        ndays=self.maxT_daily.shape[2]
-        lgpt5_3D=da.tile(self.lgpt5[:,:,np.newaxis],(1,1,ndays)).rechunk(chunks=self.chunk3D) 
-        mask_3D=da.tile(self.im_mask[:,:,np.newaxis],(1,1,ndays)).rechunk(chunks=self.chunk3D)
-        # task_time=timer()-start
-        # print('time spent on 3D vars',task_time)          
-        # start=timer()
+        bigchunk2D=(-1,72)#(-1,80)#(-1,90)#(-1,132)#
+        bigchunk3D=(-1,72,-1)#(-1,80,-1)#(-1,90,-1)#(-1,132,-1)#
+        nchunks=60#54#48#33#54
         Txsnm = 0. 
-        eta_class=LGPCalc.Eta_class(mask_3D,lgpt5_3D,self.meanT_daily,self.maxT_daily,Txsnm)
-        del lgpt5_3D,mask_3D
-        # task_time=timer()-start
-        # print('time spent on eta_class',task_time)       
-
-        # constants
+        #'build task graph for istart0,istart1,p'
+        lgpt5=da.from_array(self.lgpt5,chunks=bigchunk2D)
+        istart0,istart1=LGPCalc.rainPeak(self.meanT_daily.rechunk(chunks=bigchunk3D),lgpt5)
+        ng=da.zeros(self.pet_daily.shape,chunks=bigchunk3D,dtype='float32')
+        pet=da.from_array(self.pet_daily,chunks=bigchunk3D)        
+        #'compute eta_class'
+        lgpt5_3D=da.broadcast_to(self.lgpt5[:,:,np.newaxis].astype('float16'),(self.im_height,self.im_width,self.doy_end)).rechunk(chunks=bigchunk3D).to_delayed().ravel()
+        mask_3D=da.broadcast_to(self.im_mask[:,:,np.newaxis],(self.im_height,self.im_width,self.doy_end)).rechunk(chunks=bigchunk3D).to_delayed().ravel()
+        Tmean=self.meanT_daily.rechunk(chunks=bigchunk3D).astype('float16').to_delayed().ravel()
+        Tmax=self.maxT_daily.rechunk(chunks=bigchunk3D).astype('float16').to_delayed().ravel()
+        zip1=zip(mask_3D,lgpt5_3D,Tmean,Tmax)
+        task_list=[dask.delayed(LGPCalc.Eta_class)(m,l5,Tbar,Tmx,Txsnm) for m,l5,Tbar,Tmx in zip1]
+        results=dask.compute(*task_list)
+        eta_class=np.concatenate(results,axis=1)
+        del lgpt5_3D,mask_3D,Tmean,Tmax,zip1,task_list,results
+        #'build task graph for islgp'
+        islgp=da.where(self.meanT_daily>=5,np.int8(1),np.int8(0)).rechunk(chunks=bigchunk3D)  #KLG
         Fsnm = 5.5
-        kc_list = np.array([0.0, 0.1, 0.2, 0.5, 1.0])
+        kc_list = np.array([0.0, 0.1, 0.2, 0.5, 1.0],dtype='float32')
 
-        smallchunk3D=(-1,11,-1)
-        smallchunk2D=(-1,11)
-        # 2D chunked inputs
-        mask_cl=self.im_mask.rechunk(chunks=smallchunk2D).to_delayed().ravel()#.blocks.ravel()
-        lgpt5_cl = lgpt5.rechunk(chunks=smallchunk2D).to_delayed().ravel()#.blocks.ravel()
-        istart0_cl = istart0.rechunk(chunks=smallchunk2D).to_delayed().ravel()#.blocks.ravel()
-        istart1_cl = istart1.rechunk(chunks=smallchunk2D).to_delayed().ravel()#.blocks.ravel()
-        # Sb_old_cl = da.zeros((self.im_height,self.im_width),chunks=self.chunk2D,dtype='float32')#.to_delayed().ravel()#.blocks.ravel()
-        # Wb_old_cl = da.zeros((self.im_height,self.im_width),chunks=self.chunk2D,dtype='float32')#.to_delayed().ravel()#.blocks.ravel()         
-        Sb_old_cl = da.zeros((self.im_height,self.im_width),chunks=smallchunk2D,dtype='float32').to_delayed().ravel()#.blocks.ravel()
-        Wb_old_cl = da.zeros((self.im_height,self.im_width),chunks=smallchunk2D,dtype='float32').to_delayed().ravel()#.blocks.ravel() 
-
-        # 3D chunked inputs
-        Pet365_cl = pet_daily.rechunk(chunks=smallchunk3D).to_delayed().ravel()#.blocks.ravel()
-        p_cl = p.rechunk(chunks=smallchunk3D).to_delayed().ravel()#.blocks.ravel()
-        eta_class_cl = eta_class.rechunk(chunks=smallchunk3D).to_delayed().ravel()#.blocks.ravel()
-        Tx365_cl = self.maxT_daily.rechunk(chunks=smallchunk3D).to_delayed().ravel()#.blocks.ravel()
-        Ta365_cl = self.meanT_daily.rechunk(chunks=smallchunk3D).to_delayed().ravel()#.blocks.ravel()
-        Pcp365_cl = self.totalPrec_daily.rechunk(chunks=smallchunk3D).to_delayed().ravel()#.blocks.ravel()
-
-        # zip all the chunked variables together
-        zipvars=zip(mask_cl, Tx365_cl, Ta365_cl, Pcp365_cl, Pet365_cl, Wb_old_cl, Sb_old_cl, istart0_cl, istart1_cl, p_cl, lgpt5_cl, eta_class_cl)
-        # zipvars=zip(mask_cl[0:2], Tx365_cl[0:2], Ta365_cl[0:2], Pcp365_cl[0:2], Pet365_cl[0:2], Wb_old_cl[0:2], Sb_old_cl[0:2], istart0_cl[0:2], istart1_cl[0:2], p_cl[0:2], lgpt5_cl[0:2], eta_class_cl[0:2])
-        # print(mask_cl[0])
-        print(len(mask_cl), len(Tx365_cl), len(Ta365_cl), len(Pcp365_cl), len(Pet365_cl), len(Wb_old_cl), len(Sb_old_cl), len(istart0_cl), len(istart1_cl), len(p_cl), len(lgpt5_cl), len(eta_class_cl))
+        # chunk all inputs to big chunks
+        lgpt5_c=lgpt5
+        mask_c=self.im_mask.rechunk(chunks=bigchunk2D)
+        istart0_c = istart0
+        istart1_c = istart1  
+        Sb_old_c = da.zeros((self.im_height,self.im_width),chunks=bigchunk2D,dtype='float32')
+        Wb_old_c = da.zeros((self.im_height,self.im_width),chunks=bigchunk2D,dtype='float32')
+        Pet365_c = da.from_array(self.pet_daily,chunks=bigchunk3D)
+        p_c = LGPCalc.psh(ng,pet)
+        eta_class_c=da.from_array(eta_class,chunks=bigchunk3D)
+        Tx365_c = self.maxT_daily.rechunk(chunks=bigchunk3D)
+        Pcp365_c = self.totalPrec_daily.rechunk(chunks=bigchunk3D)
+        islgp_c = islgp  
         task_time=timer()-start
         print('time spent on prepping vars',task_time) 
 
         start=timer()
-        # create task_list, one chunk of each arr per task
-        task_list=[dask.delayed(LGPCalc.EtaCalc)(mask,Tx365,Ta365,Pcp365,Txsnm,Fsnm,pet365,Wb_old,Sb_old,istart0,istart1,Sa,D,p,kc_list,lgpt5,eta_class,self.doy_start,self.doy_end) for mask,Tx365,Ta365,Pcp365,pet365,Wb_old,Sb_old,istart0,istart1,p,lgpt5,eta_class in zipvars]
-        print('NUMBER OF TASKS',len(task_list))
+        # this is not a normal way to compute with dask
+        # our functions are so complicated that allowing dask to automate the parallel 
+        # computation is much slower and/or crashes due to high memory use
+        # here we loop thru chunks one at a time, compute the inputs ahead 
+        # of time to reduce passing many task graphs, and call the EtaCalc 
+        # func (which includes some parallelism) on each chunk, then concat the result chunks
+        results=[]
+        task_list=[]
+        for i in range(nchunks):
+            print('loop',i)
+            mask_s=mask_c.blocks[0,i].compute()
+            Tx365_s=Tx365_c.blocks[0,i,0].compute()
+            islgp_s=islgp_c.blocks[0,i,0].compute()
+            Pcp365_s=Pcp365_c.blocks[0,i,0].compute()
+            Pet365_s=Pet365_c.blocks[0,i,0].compute()
+            Wb_old_s=Wb_old_c.blocks[0,i].compute()
+            Sb_old_s=Sb_old_c.blocks[0,i].compute()
+            istart0_s=istart0_c.blocks[0,i].compute()
+            istart1_s=istart1_c.blocks[0,i].compute()
+            lgpt5_s=lgpt5_c.blocks[0,i].compute()
+            # print('eta_class')
+            eta_class_s=eta_class_c.blocks[0,i].compute()
+            # print('p')
+            p_s=p_c.blocks[0,i,0].compute()
+            # print('lgp_tot')
+            results.append(LGPCalc.EtaCalc(mask_s,Tx365_s,islgp_s,Pcp365_s,Txsnm,Fsnm,Pet365_s,Wb_old_s,Sb_old_s,istart0_s,istart1_s,Sa,D,p_s,kc_list,lgpt5_s,eta_class_s,self.doy_start,self.doy_end))
         task_time=timer()-start
-        print('time spent building task list',task_time) 
-
-        start=timer()
-        results=dask.compute(*task_list)
-        task_time=timer()-start
-        print('time spent in compute',task_time)    
+        print('time spent in compute',task_time)  
 
         start=timer()
         lgp_tot=np.concatenate(results,axis=1)
         task_time=timer()-start
         print('time spent on lgp_tot concat',task_time)   
+
         # start=timer()
         # lgp_tot=da.map_blocks(LGPCalc.EtaCalc,mask_cl, Tx365_cl, Ta365_cl, Pcp365_cl,Txsnm,Fsnm,Pet365_cl, Wb_old_cl, Sb_old_cl, istart0_cl, istart1_cl,Sa,D,p_cl,kc_list,lgpt5_cl, eta_class_cl,self.doy_start,self.doy_end,dtype='float32',meta=np.array((self.im_height,self.im_width), dtype='float32')).compute()         
         # task_time=timer()-start
@@ -1109,7 +1237,7 @@ class ClimateRegime(object):
             return np.where(mask, lgp_tot, np.nan).astype('float32')  #KLG
         else:
             return lgp_tot.astype('float32')  #KLG
-        # return istart0
+        # return results
   
     def getLGPClassified(self, lgp): # Original PyAEZ source code
         """This function calculates the classification of moisture regime using LGP.

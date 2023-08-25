@@ -44,7 +44,8 @@ class ETOCalc(object):
     # @staticmethod
     # @nb.jit(nopython=True)
     # def calculateETONumba(cycle_begin, cycle_end, latitude, alt,  minT_daily, maxT_daily, windspeed_daily, shortRad_daily, rel_humidity):
-    def calculateETO(self,dstart,dend,cdims,lat,alt,tmn,tmx,u2m,srad,rh):  #KLG
+    # def calculateETO(self,dstart,dend,cdims,lat,alt,tmn,tmx,u2m,srad,rh):  #KLG
+    def calculateETO(self,dstart,dend,lat,alt,tmn,tmx,u2m,srad,rh):  #KLG
         # numba doesn't speed this up in time tests  #KLG
         # removing in favor of vectorization which will allow chunking with dask for speed  #KLG
 
@@ -53,35 +54,107 @@ class ETOCalc(object):
         Returns:
             ## float: ETo of a single pixel (function is called pixel-wise)
             float: ETo of each pixel  #KLG
-        """        
-        # constants
-        nlats=cdims[0]
-        nlons=cdims[1]
-    
-        tavg = 0.5*(tmn + tmx)  # Averaged temperature  #KLG
-        lam = 2.501 - 0.002361 * tavg  # Latent heat of vaporization
-        dayoyr = np.arange(dstart, dend+1)  # Julien Days #KLG
-        ndays=len(dayoyr)  #KLG
+        """   
+        # this calculation has been reordered to optimize memory use
 
-        # Mean Saturation Vapor Pressure derived from air temperature
+        nlats=tmn.shape[0]
+        nlons=tmn.shape[1]
+        dayoyr = np.arange(dstart, dend+1)  # Julien Days #KLG
+        ndays=len(dayoyr)  #KLG        
+
+        # (a) calculate extraterrestrial radiation 
+        #-------------------------------------
+        latr = (lat * np.pi/180.).astype('float32')
+        latr = np.broadcast_to(latr[:,:,np.newaxis],(nlats,nlons,ndays))
+
+        # solar declination (rad)
+        sdcl = (0.4093 * np.sin(0.017214206 * dayoyr - 1.405)).astype('float32')
+        sdcl = np.broadcast_to(sdcl[np.newaxis, np.newaxis,:],(nlats,nlons,ndays))
+
+        # sunset hour angle
+        top=(-np.tan(latr)*np.tan(sdcl))
+        X = 1 - (np.tan(latr)**2)*(np.tan(sdcl)**2)
+        inds=(X<=0)
+        X[inds]=1.E-5
+        omg = 1.5708 - np.arctan(top/(X**0.5))
+        omg[inds]=0.
+        del top,X,inds      
+
+        # relative distance earth to sun
+        sdst = (1.0 + 0.033 * np.cos(0.017214206 * dayoyr)).astype('float32')
+        sdst = np.broadcast_to(sdst[np.newaxis, np.newaxis,:],(nlats,nlons,ndays))
+        del dayoyr
+
+        # extraterrestrial radiation
+        xx = (np.sin(sdcl) * np.sin(latr))
+        yy = (np.cos(sdcl) * np.cos(latr))
+        del sdcl,latr
+        ra = np.round((37.586 * sdst * (omg*xx + np.sin(omg)*yy)).astype('float32'),1)
+        # print('omg,sdst,ra',omg.dtype,sdst.dtype,ra.dtype)
+        del sdst, omg, xx, yy
+
+        # (b) Mean Saturation Vapor Pressure derived from air temperature
         es_tmin = 0.6108 * np.exp((17.27 * tmn) / (tmn + 237.3))
         es_tmax = 0.6108 * np.exp((17.27 * tmx) / (tmx + 237.3))
         es = 0.5*(es_tmin + es_tmax)
         ea = rh * es  # Actual Vapor Pressure derived from relative humidity
+        del rh
+        # print('es_tmin,es_tmax,es,ea',es_tmin.dtype,es_tmax.dtype,es.dtype,ea.dtype)
 
-        # slope vapour pressure curve
+        # (c) slope vapour pressure curve
         dlmx = 4098. * es_tmax / (tmx + 237.3)**2
+        del es_tmax
         dlmn = 4098. * es_tmin / (tmn + 237.3)**2
-        del es_tmin, es_tmax  #KLG
+        del es_tmin
         dl = 0.5* (dlmx + dlmn)
+        # print('dlmx,dlmn,dl',dlmx.dtype,dlmn.dtype,dl.dtype)
         del dlmx,dlmn  #KLG
+
+        # (d) solar radiation Rs (0.25, 0.50 Angstrom coefficients)
+        # rs = (0.25 + (0.50 * (sd/dayhr))) * ra
+        alt = np.broadcast_to(alt[:,:,np.newaxis],(nlats,nlons,ndays))
+        rs0 = (0.75 + 0.00002 * alt) * ra
+        # print('alt,rs0',alt.dtype,rs0.dtype)
+      
+        # (e) net longwave radiation Rnl
+        # Stefan-Boltzmann constant [MJ K-4 m-2 day-1]
+        sub_cst = 4.903E-9
+        with np.errstate(invalid='ignore',divide='ignore'):
+            rs_div_ds0=(srad/rs0)
+        del rs0
+        rnl = (((273.16+tmx)**4)+((273.16 + tmn)**4)) * \
+            (0.34 - (0.14*(ea**0.5))) * \
+            ((1.35*(rs_div_ds0))-0.35)*sub_cst/2
+        del rs_div_ds0#,tmx,tmn
+
+        # (f) net shortwave radiation Rns = (1 - alpha) * Rs
+        # (alpha for grass = 0.23)
+        rns = 0.77 * srad
+        del srad
+        # (g) net radiation Rn = Rns - Rnl
+        rn = rns - rnl
+        # print('rnl,rns,rn',rnl.dtype,rns.dtype,rn.dtype)
+        del rns,rnl
+
+        # (h) soil heat flux [MJ/m2/day]
+        tavg = 0.5*(tmn + tmx)  # Averaged temperature  #KLG
+        del tmn,tmx
+        ta_diff=np.diff(tavg,n=1,axis=2,prepend=tavg[:,:,-1:])  #KLG
+        G = 0.14 * ta_diff  #KLG
+        # print('tavg,ta_diff,G',tavg.dtype,ta_diff.dtype,G.dtype)
+        del ta_diff
+
+        #(i)
+        # Psychrometric constant
+        lam = 2.501 - 0.002361 * tavg  # Latent heat of vaporization
 
         # Atmospheric pressure
         ap = 101.3*np.power(((293-(0.0065*alt))/293), 5.256)
-        ap = np.tile(ap[:,:,np.newaxis],(1,1,ndays)) 
+        # ap = np.broadcast_to(ap[:,:,np.newaxis],(nlats,nlons,ndays))
+        del alt
 
-        # Psychrometric constant
         gam = 0.0016286 * ap/lam
+        # print('lam,ap,gam',lam.dtype,ap.dtype,gam.dtype)
         del ap
 
         hw = 200.
@@ -98,71 +171,11 @@ class ETOCalc(object):
         rhoc = Rl/(0.5*RLAI)  # crop canopy resistance
 
         gamst = gam * (1. + rhoc/rhoa)
+        # print('rhoa,gamst',rhoa.dtype,gamst.dtype)
+        del rhoa
 
 
-        # latr = latitude * np.pi/180.
-        latr = lat * np.pi/180.
-        latr = np.tile(latr[:,:,np.newaxis],(1,1,ndays))
-
-        # (a) calculate extraterrestrial radiation
-        # solar declination (rad)
-        sdcl = 0.4093 * np.sin(0.017214206 * dayoyr - 1.405)
-        sdcl = np.tile(sdcl[np.newaxis, np.newaxis,:], (nlats,nlons,1))
-
-        # relative distance earth to sun
-        xx = np.sin(sdcl) * np.sin(latr)
-        yy = np.cos(sdcl) * np.cos(latr)
-        zz = xx/yy        
-
-        with np.errstate(invalid='ignore'):
-            omg = np.tan(zz / (1. - zz*zz)**0.5) + 1.5708
-        dayhr = 24. * (omg/np.pi)
-
-        omg=np.where((np.abs(zz)>=0.9999)&(zz>0),np.pi,omg)
-        dayhr=np.where((np.abs(zz) >= 0.9999)&(zz > 0), 23.999,dayhr)
-        omg=np.where((np.abs(zz) >= 0.9999)&(zz <= 0),0,omg)
-        dayhr=np.where((np.abs(zz) >= 0.9999)&(zz <= 0), 0.001,dayhr)
-        del latr,sdcl,zz        
-
-        sdst = 1.0 + 0.033 * np.cos(0.017214206 * dayoyr)
-        sdst = np.tile(sdst[np.newaxis, np.newaxis,:], (nlats,nlons,1))
-        del dayoyr
-
-        ra = 37.586 * sdst * (omg*xx + np.sin(omg)*yy)
-        del sdst, omg, dayhr, xx, yy        
-
-        # (b) solar radiation Rs (0.25, 0.50 Angstrom coefficients)
-        # rs = (0.25 + (0.50 * (sd/dayhr))) * ra
-        # rs = shortRad_daily
-        rs = srad
-        alt=np.tile(alt[:,:,np.newaxis],(1,1,ndays)) 
-        rs0 = (0.75 + 0.00002 * alt) * ra
-        del alt
-
-        # (c) net shortwave radiation Rns = (1 - alpha) * Rs
-        # (alpha for grass = 0.23)
-        rns = 0.77 * rs
-
-        # (d) net longwave radiation Rnl
-        # Stefan-Boltzmann constant [MJ K-4 m-2 day-1]
-        sub_cst = 0.000000004903
-        with np.errstate(invalid='ignore',divide='ignore'):
-            rs_div_ds0=rs/rs0
-        rnl = (((273.16+tmx)**4)+((273.16 + tmn)**4)) * \
-            (0.34 - (0.14*(ea**0.5))) * \
-            ((1.35*(rs_div_ds0))-0.35)*sub_cst/2
-        del rs0,rs,rs_div_ds0,tmx,tmn
-
-        # (e) net radiation Rn = Rns - Rnl
-        rn = rns - rnl
-        del rns,rnl
-
-        # (f) soil heat flux [MJ/m2/day]
-        ta_diff=np.diff(tavg,n=1,axis=2,prepend=tavg[:,:,-1:])  #KLG
-        G = 0.14 * ta_diff  #KLG
-        del ta_diff
-
-        # (g) calculate aerodynamic and radiation terms of ET0
+        # (j) calculate aerodynamic and radiation terms of ET0
         et0ady = gam/(dl+gamst) * 900./(tavg+273.) * u2m * (es-ea)
         del gam,tavg,u2m,es,ea
 
@@ -170,9 +183,11 @@ class ETOCalc(object):
         del dl,gamst,rn,G,lam
 
         et0 = et0ady + et0rad
+        # print('et0ady,et0rad,et0',et0ady.dtype,et0rad.dtype,et0.dtype)
         del et0ady,et0rad
 
         et0 = np.where(et0<0,0,et0)
+        # print('et0',et0.dtype)
 
         return et0.astype('float32')
 

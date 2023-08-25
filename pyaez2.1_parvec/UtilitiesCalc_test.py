@@ -13,6 +13,7 @@ except:
     from osgeo import gdal
 import dask.array as da
 import dask
+# from dask.distributed import Client
 from collections import OrderedDict
 import psutil
 
@@ -115,7 +116,7 @@ class UtilitiesCalc(object):
 
             # compute tasks in parallel
             # this returns a list of arrays in the same order as month_info
-            print('in UtlitiesCalc, computing monthly aggregate in parallel')
+            # print('in UtlitiesCalc, computing monthly aggregate in parallel')
             data_list=dask.compute(*task_list)
 
             # stack the results along a 3rd dimension (ny,nx,12)
@@ -336,7 +337,7 @@ class UtilitiesCalc(object):
         return interp_daily_temp.astype('float32')   #KLG
         # return results_list
 
-    def setChunks(self,nchunks,shape):
+    def setChunks(self,nchunks,shape,reduce_mem_used):
         nlats=shape[0]
         nlons=shape[1]
         ntimes=shape[2]
@@ -346,24 +347,39 @@ class UtilitiesCalc(object):
             # how many longitudes per chunk
             nlons_chunk=int(np.ceil(nlons/nchunks))
         else:
-            # default nchunks based on system properties    
-            RAMinfo=psutil.virtual_memory() # returns info about system RAM in bytes
-            threads=psutil.cpu_count()  # return system number of threads 
-            scale_factor=40             # how much RAM per thread is needed for computation, defined as a factor of the size of a 3D data chunk
-            buff=250000000            # amount of RAM (bytes) to reduce RAM.free to be safe (.25GB) 
+            # # default nchunks based on system properties    
+            # RAMinfo=psutil.virtual_memory() # returns info about system RAM in bytes
+            # threads=psutil.cpu_count()  # return system number of threads 
+            # scale_factor=100             # how much RAM per thread is needed for computation, defined as a factor of the size of a 3D data chunk
+            # if reduce_mem_used: scale_factor=scale_factor+10
+            # buff=250000000            # amount of RAM (bytes) to reduce RAM.free to be safe (.25GB) 
 
-            chunklim=(RAMinfo.free - buff)/threads/scale_factor  # max size (bytes) per 3D data chunk for computation to succeed on each thread
-            npoints=chunklim/4  # number of data points that can fit in the chunklim (4 bytes is the size of one float32 data point)
+            # chunklim=(RAMinfo.free - buff)/threads/scale_factor  # max size (bytes) per 3D data chunk for computation to succeed on each thread
+            # npoints=chunklim/4  # number of data points that can fit in the chunklim (4 bytes is the size of one float32 data point)
             
+            # testing defining chunk by computing mem per thread
+            RAMinfo=psutil.virtual_memory() # returns info about system RAM in bytes
+            threads=psutil.cpu_count()  # return system number of threads            
+            func_scale_factor=8
+            dask_scale_factor=2
+            buff=0#.25E9
+            RAMperthread= (RAMinfo.free-buff)/threads
+            chunklim=RAMperthread/func_scale_factor/dask_scale_factor
+            npoints=chunklim/4
+
             # we chunk only by longitude
             # so npoints must contain all lats and all times
             nlons_chunk=int(np.floor(npoints/nlats/ntimes)) # number of longitudes per chunk 
             nchunks=int(np.ceil(nlons/nlons_chunk))
 
+            print('computed optimized nchunks,nlons',nchunks,nlons_chunk)
+            
             # making sure we have at least as many chunks as threads
             if nchunks < threads:
                 nchunks=threads
                 nlons_chunk=int(np.ceil(nlons/nchunks))
+
+
 
         # dimensions of a single chunk for 3D and 2D arrays, -1 means all latitudes and all times
         chunk3D=(-1,nlons_chunk,-1)
