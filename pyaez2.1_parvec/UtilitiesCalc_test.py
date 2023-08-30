@@ -11,8 +11,8 @@ try:
     import gdal
 except:
     from osgeo import gdal
-import dask.array as da
-import dask
+# import dask.array as da
+# import dask
 # from dask.distributed import Client
 from collections import OrderedDict
 import psutil
@@ -27,7 +27,7 @@ class UtilitiesCalc(object):
         """        
         self.chunk2D = chunk2D
         self.chunk3D = chunk3D
-        if self.chunk2D:  
+        if self.chunk2D and self.chunk3D:  
             self.parallel=True
         else:
             self.parallel=False
@@ -67,22 +67,9 @@ class UtilitiesCalc(object):
         Returns:
             3D NumPy: Monthly data array of dims (ny,nx,12)
         """        
-        # monthly_vector = np.zeros(12)
-
-        # monthly_vector[0] = np.sum(daily_vector[:31])/31
-        # monthly_vector[1] = np.sum(daily_vector[31:59])/28
-        # monthly_vector[2] = np.sum(daily_vector[59:90])/31
-        # monthly_vector[3] = np.sum(daily_vector[90:120])/30
-        # monthly_vector[4] = np.sum(daily_vector[120:151])/31
-        # monthly_vector[5] = np.sum(daily_vector[151:181])/30
-        # monthly_vector[6] = np.sum(daily_vector[181:212])/31
-        # monthly_vector[7] = np.sum(daily_vector[212:243])/31
-        # monthly_vector[8] = np.sum(daily_vector[243:273])/30
-        # monthly_vector[9] = np.sum(daily_vector[273:304])/31
-        # monthly_vector[10] = np.sum(daily_vector[304:334])/30
-        # monthly_vector[11] = np.sum(daily_vector[334:])/31
 
         if self.parallel:
+            import dask
             # delay the input data so it's copied once instead of at each call of the function
             daily_arr=dask.delayed(daily_arr)
             # daily_arr=daily_arr.to_delayed()
@@ -123,7 +110,7 @@ class UtilitiesCalc(object):
             monthly_arr=np.stack(data_list,axis=-1,dtype='float32')  
         else:      
 
-            monthly_arr = np.zeros((daily_arr.shape[0],daily_arr.shape[1],12))
+            monthly_arr = np.zeros((daily_arr.shape[0],daily_arr.shape[1],12),dtype='float32')
 
             monthly_arr[:,:,0] = daily_arr[:,:,:31].sum(axis=2)/31
             monthly_arr[:,:,1] = daily_arr[:,:,31:59].sum(axis=2)/28
@@ -165,28 +152,33 @@ class UtilitiesCalc(object):
         # Generate a 2D array of latitude  #KLG
         # for parallel computing
         if self.parallel:
+            import dask.array as da
             # For lat_min, lat_max values given at pixel centers  #KLG
             if location:
                 lat_vals=da.linspace(lat_min, lat_max, im_height).astype('float32')  #KLG
-                lat_map=da.tile(lat_vals[:,np.newaxis],(1,im_width)).rechunk(chunks=self.chunk2D)  #KLG            
+                # lat_map=da.tile(lat_vals[:,np.newaxis],(1,im_width)).rechunk(chunks=self.chunk2D)  #KLG
+                lat_map=da.broadcast_to(lat_vals[:,np.newaxis],(im_height,im_width),chunks=self.chunk2D)            
             # For lat_min, lat_max values given at exterior pixel edges  #KLG
             if ~location:
                 lat_step=(lat_max-lat_min)/im_height  #KLG
                 lat_vals = da.linspace(lat_min+lat_step/2, lat_max-lat_step/2, im_height)  #KLG
-                lat_map=da.tile(lat_vals[:,np.newaxis],(1,im_width)).rechunk(chunks=self.chunk2D)  #KLG     
+                # lat_map=da.tile(lat_vals[:,np.newaxis],(1,im_width)).rechunk(chunks=self.chunk2D)  #KLG     
+                lat_map=da.broadcast_to(lat_vals[:,np.newaxis],(im_height,im_width),chunks=self.chunk2D)            
         # for serial computing
         else:     
             if location:
                 lat_vals=np.linspace(lat_min, lat_max, im_height).astype('float32')  #KLG
-                lat_map=np.tile(lat_vals[:,np.newaxis],(1,im_width))  #KLG
+                # lat_map=np.tile(lat_vals[:,np.newaxis],(1,im_width))  #KLG
+                lat_map=np.broadcast_to(lat_vals[:,np.newaxis],(im_height,im_width))                
             if ~location:
                 lat_step=(lat_max-lat_min)/im_height  #KLG
                 lat_vals = np.linspace(lat_min+lat_step/2, lat_max-lat_step/2, im_height)  #KLG
-                lat_map=np.tile(lat_vals[:,np.newaxis],(1,im_width))  #KLG                
+                # lat_map=np.tile(lat_vals[:,np.newaxis],(1,im_width))  #KLG                
+                lat_map=np.broadcast_to(lat_vals[:,np.newaxis],(im_height,im_width))                
 
         # precision issues can arise from above, why not just take a 1D lat array of pixel centers as an input  #KLG
         # instead of recreating them with linspace. Then, use below to make the 2D array  #KLG
-        # lat_map=np.tile(lats[:,np.newaxis],(1,im_width))  #KLG
+        # lat_map=np.broadcast_to(lats[:,np.newaxis],(im_height,im_width))  #KLG
         return lat_map
 
     def classifyFinalYield(self, est_yield):
@@ -277,9 +269,15 @@ class UtilitiesCalc(object):
 
         Returns:
             3D NumPy array: 5th degree spline smoothed temperature
-        """          
+        """        
 
-        if self.parallel:            
+        nlats=daily_T.shape[0]
+        nlons=daily_T.shape[1] 
+        ndays=daily_T.shape[2] 
+        if self.parallel:   
+            import dask
+            import dask.array as da
+
             # spline fitting
             def polyfit_polyval(x,y,deg):
                 coefs=np.polynomial.polynomial.polyfit(x,y,deg=deg).astype('float32')
@@ -288,40 +286,33 @@ class UtilitiesCalc(object):
 
             deg=5  # polynomial degree for spline fitting
             days = np.arange(day_start,day_end+1).astype('int32') # x values  #KLG
-
-            # replace any nan in the data with zero (nans may be present under a mask) #KLG
-            mask3D = da.tile(mask[:,:,np.newaxis], (1,1,days.shape[0])).rechunk(chunks=self.chunk3D).astype('int32')  #KLG
-            data=da.where(mask3D==0,np.float32(0),np.float32(daily_T))   #KLG
-
-            # collapse lat and lon because polyfit and polyval only work on data up to 2 dimensions
-            npoints=mask3D.shape[0]*self.chunk3D[1] 
-            data2D=data.transpose(2,0,1).reshape(days.shape[0],-1).rechunk({0:-1,1:npoints}).astype('float32')
-            # data2D=data.transpose(2,0,1).reshape(days.shape[0],-1).rechunk({0:-1,1:'auto'})
-
-            # print('in UtilitiesCalc, computing interp_daily_temp in parallel')
-            # interp_daily_temp=polyfit_polyval(days,data2D,deg).astype('float32')
-            # interp_daily_temp=interp_daily_temp.reshape(mask3D.shape[0],mask3D.shape[1],-1).astype('float32')
-            # interp_daily_temp=da.from_array(interp_daily_temp,chunks=self.chunk3D,dtype='float32')
-
-            # # delay data so it's only passed to computations once
-            days=dask.delayed(days)
-            delayed_chunks=data2D.to_delayed()
+            npoints=nlats*self.chunk3D[1]
             
-            task_list = [dask.delayed(polyfit_polyval)(days,dchunk,deg) for dchunk in delayed_chunks[0,:]]
-            print('in UtilitiesCalc, computing interp_daily_temp in parallel')
-            results_list=dask.compute(*task_list)
-            # print(results_list[0].shape)
+            with dask.config.set(**{'array.slicing.split_large_chunks': False}):
+                # replace any nan in the data with zero (nans may be present under a mask) #KLG
+                mask3D=da.broadcast_to(mask[:,:,np.newaxis],(nlats,nlons,ndays)).rechunk(chunks=self.chunk3D)#.astype('int8')       
+                data=da.where(mask3D==0,np.float32(0),np.float32(daily_T))   #KLG
 
-            interp_daily_temp=da.concatenate(results_list)
-            interp_daily_temp=interp_daily_temp.reshape(mask3D.shape[0],mask3D.shape[1],-1).rechunk(chunks=self.chunk3D).astype('float32')  #KLG
-            # interp_daily_temp_np=np.concatenate(results_list).reshape(mask3D.shape[0],mask3D.shape[1],-1).astype('float32')  #KLG
-            # interp_daily_temp=da.from_array(interp_daily_temp_np,chunks=self.chunk3D)            
+                # collapse lat and lon because polyfit and polyval only work on data up to 2 dimensions            
+                data2D=data.transpose(2,0,1).reshape(ndays,-1).rechunk({0:-1,1:npoints})#.astype('float32')
+
+            # delay data so it's only passed to computations once
+            days=dask.delayed(days)
+            delayed_chunks=data2D.to_delayed().ravel()
+            
+            task_list = [dask.delayed(polyfit_polyval)(days,dchunk,deg) for dchunk in delayed_chunks]
+            # print('in UtilitiesCalc, computing interp_daily_temp in parallel')
+            results_list=dask.compute(*task_list)
+            interp_daily_temp=np.concatenate(results_list)
+            del results_list
+            interp_daily_temp=interp_daily_temp.reshape(nlats,nlons,ndays)#.rechunk(chunks=self.chunk3D)#.astype('float32')  #KLG         
 
         else:
             days = np.arange(day_start,day_end+1) # x values  #KLG
 
             # replace any nan (i.e. if there is a mask) in the data with zero  #KLG
-            mask3D = np.tile(mask[:,:,np.newaxis], (1,1,days.shape[0]))  #KLG
+            # mask3D = np.tile(mask[:,:,np.newaxis], (1,1,days.shape[0]))  #KLG
+            mask3D=da.broadcast_to(mask[:,:,np.newaxis],(nlats,nlons,ndays))#.astype('int8')  
             data=np.where(mask3D==0,0,daily_T)   #KLG
             data2D=data.transpose(2,0,1).reshape(days.shape[0],-1) # every column is a set of y values  #KLG
             del data  #KLG
@@ -334,7 +325,7 @@ class UtilitiesCalc(object):
             interp_daily_temp=interp_daily_temp.reshape(mask3D.shape[0],mask3D.shape[1],-1).astype('float32')  #KLG
             interp_daily_temp=np.where(mask3D==0,np.nan,interp_daily_temp)
         
-        return interp_daily_temp.astype('float32')   #KLG
+        return interp_daily_temp#.astype('float32')   #KLG
         # return results_list
 
     def setChunks(self,nchunks,shape,reduce_mem_used):
@@ -362,6 +353,9 @@ class UtilitiesCalc(object):
             threads=psutil.cpu_count()  # return system number of threads            
             func_scale_factor=8
             dask_scale_factor=2
+            # the following should eventually be scaled to a certain size required RAM
+            # e.g. the multiplier should mean that RAM usage is kept under xGB
+            if reduce_mem_used: func_scale_factor=func_scale_factor*2
             buff=0#.25E9
             RAMperthread= (RAMinfo.free-buff)/threads
             chunklim=RAMperthread/func_scale_factor/dask_scale_factor
@@ -372,7 +366,7 @@ class UtilitiesCalc(object):
             nlons_chunk=int(np.floor(npoints/nlats/ntimes)) # number of longitudes per chunk 
             nchunks=int(np.ceil(nlons/nlons_chunk))
 
-            print('computed optimized nchunks,nlons',nchunks,nlons_chunk)
+            # print('computed optimized nchunks,nlons',nchunks,nlons_chunk)
             
             # making sure we have at least as many chunks as threads
             if nchunks < threads:

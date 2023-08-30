@@ -6,10 +6,11 @@ PyAEZ: LGPCalc.py calculates the length of growing period (LGP)
 
 # from numba import jit
 import numpy as np
-import dask
-import psutil
+# import dask
+# import psutil
 from time import time as timer
-import dask.array as da
+# import dask.array as da
+# import sys
 
 
 # @jit(nopython=True)
@@ -40,30 +41,21 @@ def rainPeak(meanT_daily, lgpt5):
 
     # vectorization  #KLG
     # get index of first occurrence in time where true at each grid cell  #KLG
-    # day1=np.argmax(meanT_daily>=5.0,axis=2)   #KLG
-    # # argmax returns 0 where there is no first occurrence (no growing season) so need to fix  #KLG
-    # day1=np.where(lgpt5==0,np.nan,day1)  #KLG
-    # istart0=np.where((lgpt5<365),day1,0).astype('float32') # replaces if block  #KLG
-    # dat1=np.where(istart0>365,istart0-365,istart0)  # replaces setdat function  #KLG
-    # istart1=np.where((lgpt5<365),dat1+lgpt5-1,lgpt5-1).astype('float32') # replaces if block  #KLG
+    day1=np.argmax(meanT_daily>=5.0,axis=2)   #KLG
+    # argmax returns 0 where there is no first occurrence (no growing season) so need to fix  #KLG
+    day1=np.where(lgpt5==0,np.nan,day1)  #KLG
+    istart0=np.where((lgpt5<365),day1,0).astype('float32') # replaces if block  #KLG
+    dat1=np.where(istart0>365,istart0-365,istart0)  # replaces setdat function  #KLG
+    istart1=np.where((lgpt5<365),dat1+lgpt5-1,lgpt5-1).astype('float32') # replaces if block  #KLG
 
-    # mask=da.where(da.isfinite(lgpt5),1,0)
     
-    day1=da.argmax(meanT_daily>=5.0,axis=2)   #KLG
-    day1=da.where(lgpt5==0,np.nan,day1)  #KLG
-    istart0=da.where((lgpt5<365),day1,0).astype('float32')
-    # istart0=da.where(mask,istart0,np.nan).astype('float32')
-    dat1=da.where(istart0>365,istart0-365,istart0)  # replaces setdat function  #KLG
-    istart1=da.where((lgpt5<365),dat1+lgpt5-1,lgpt5-1).astype('float32') # replaces if block  #KLG
+    # day1=da.argmax(meanT_daily>=5.0,axis=2)   #KLG
+    # day1=da.where(lgpt5==0,np.nan,day1)  #KLG
+    # istart0=da.where((lgpt5<365),day1,0).astype('float32')
+    # # istart0=da.where(mask,istart0,np.nan).astype('float32')
+    # dat1=da.where(istart0>365,istart0-365,istart0)  # replaces setdat function  #KLG
+    # istart1=da.where((lgpt5<365),dat1+lgpt5-1,lgpt5-1).astype('float32') # replaces if block  #KLG
 
-
-
-
-    # if parallel:
-    #     print('in LGPCalc, computing istart0 in parallel')
-    #     istart0=istart0.compute()
-    #     print('in LGPCalc, computing istart1 in parallel')
-    #     istart1=istart1.compute()
     return istart0, istart1
 # ============================================
 
@@ -185,15 +177,15 @@ def psh(ng, et0):
         float: soil moisture depletion fraction
     """
 
-    # psh0=np.where(ng==0,np.float32(0.5),np.float32(0.3+(ng-1)*.05))
-    # psh = psh0 + .04 * (5.-et0)
-    # psh=np.where(psh<0.1,np.float32(0.1),np.float32(psh))  
-    # psh=np.where(psh>0.8,np.float32(0.8),np.float32(psh))
-
-    psh0=da.where(ng==0,0.5,0.3+(ng-1)*.05)
+    psh0=np.where(ng==0,0.5,0.3+(ng-1)*.05)
     psh = psh0 + .04 * (5.-et0)
-    psh=da.where(psh<0.1,0.1,psh)  
-    psh=da.where(psh>0.8,0.8,psh)
+    psh=np.where(psh<0.1,0.1,psh)  
+    psh=np.where(psh>0.8,0.8,psh)
+
+    # psh0=da.where(ng==0,0.5,0.3+(ng-1)*.05)
+    # psh = psh0 + .04 * (5.-et0)
+    # psh=da.where(psh<0.1,0.1,psh)  
+    # psh=da.where(psh>0.8,0.8,psh)
 
     return psh.astype('float32')
 
@@ -893,7 +885,7 @@ def EtaCalc_warmest(classmap,classnum,kc_list,eto,sb_old,pr,wb_old,Sa,D,p,Fsnm,t
 
 
 # def EtaCalc(im_mask,Tx,Ta,Pr,Txsnm,Fsnm,Eto,wb_old,sb_old,istart0,istart1,Sa,D,p,kc_list,lgpt5,eta_class,doy_start,doy_end):
-def EtaCalc(im_mask,Tx,islgp,Pr,Txsnm,Fsnm,Eto,wb_old,sb_old,istart0,istart1,Sa,D,p,kc_list,lgpt5,eta_class,doy_start,doy_end):
+def EtaCalc(im_mask,Tx,islgp,Pr,Txsnm,Fsnm,Eto,wb_old,sb_old,istart0,istart1,Sa,D,p,kc_list,lgpt5,eta_class,doy_start,doy_end,parallel):
 
     """vectorized calculation of actual evapotranspiration (ETa)
     
@@ -924,41 +916,15 @@ def EtaCalc(im_mask,Tx,islgp,Pr,Txsnm,Fsnm,Eto,wb_old,sb_old,istart0,istart1,Sa,
         Sb_new (float): daily value of the 'Snow balance' (mm), shape (im_height,im_width)
         kc_new (float): daily value of the 'crop coefficients for water requirements', shape (im_height,im_width)        
     """  
-    # incoming variables are either constants, the kc_list, an x,y array of time-invariant quantities
-    # or an x,y, array of a single time step for time variant quantities
-    # outputs x,y, arrays at a single time step for Etm_new,Eta_new,Wb_new,Wx_new,Sb_new,kc_new
-    ###############################################################################################
-    ######### RETHNK THIS, AND REPLACE DASK.DELAYED WITH TO_DELAYED BELOW #########################
-    ###############################################################################################
-    # mask_delayed=im_mask.to_delayed().ravel()
-    # lgpt5_delayed=lgpt5.to_delayed().ravel()
-    # task_list=[dask.delayed(Eta_class)(mask_c,lgpt5_c,Ta_c,Tx_c,Txsnm) for mask_c,lgpt5_c,Ta_c,Tx_c in zip(mask_delayed,lgpt5_delayed,Ta_delayed,Tx_delayed,Txsnm)]
-    # results_list=dask.compute(*task_list)
-    # eta_class=np.concatenate(results_list,axis=1)
-    # start=timer()
-    # task_list=dask.delayed(Eta_class)(im_mask_dlyd,lgpt5_dlyd,Ta_da,Tx_da,Txsnm)
-    # eta_class=dask.compute(task_list)[0]
-    # eta_class_delay=dask.delayed(eta_class)
-    # # eta_class=Eta_class(im_mask,lgpt5,Ta,Tx,Txsnm)
-    # ncats=5 # total number of Eta classes
-    # task_time=timer()-start
-    # print('time spent on eta_class',task_time)
-
     # # we parallelize here by eta_class (the six different regimes for computing ET)
     # # the computations for eta_class are each a delayed function
     # # we call each function which saves the future computation as an object to a list of tasks
     # # then we call compute on the list of tasks at the end to execute them in parallel 
-    # eta_class_delay=dask.delayed(eta_class)
-    # # mask=dask.delayed(mask)
-    # Eto=dask.delayed(Eto)
-    # sb_old_dlyd=dask.delayed(sb_old)
-    # Pr=dask.delayed(Pr)
-    # wb_old_dlyd=dask.delayed(wb_old)
-    # p=dask.delayed(p)
-    # Tx=dask.delayed(Tx)
-    
+    if parallel:
+        import dask
+
     ncats=5
-    nvars=4
+    # nvars=4
     ETM_list=[]
     ETA_list=[]
     WB_list=[]
@@ -971,16 +937,10 @@ def EtaCalc(im_mask,Tx,islgp,Pr,Txsnm,Fsnm,Eto,wb_old,sb_old,istart0,istart1,Sa,
     # results_list
     # print('beginning day loop')
     for idoy in range(doy_start-1, doy_end):
-        start=timer()
         # compute etm,eta,wb,sb for each eta regime
         # results_list is list of lists: [[etm, eta, wb, sb],[etm, eta, wb, sb],...] in that order
-        results_list=[]
-        # vars1=EtaCalc_snow(eta_class[:,:,idoy],1,kc_list,Eto[:,:,idoy],sb_old,Pr[:,:,idoy],wb_old,Sa,D,p[:,:,idoy])
-        # vars2=EtaCalc_snowmelting(eta_class[:,:,idoy],2,kc_list,Eto[:,:,idoy],sb_old,Pr[:,:,idoy],wb_old,Sa,D,p[:,:,idoy],Fsnm,Tx[:,:,idoy],Txsnm)                                                                       
-        # vars3=EtaCalc_cold(eta_class[:,:,idoy],3,kc_list,Eto[:,:,idoy],sb_old,Pr[:,:,idoy],wb_old,Sa,D,p[:,:,idoy],Fsnm,Tx[:,:,idoy],Txsnm)                                                               
-        # vars4=EtaCalc_warm(eta_class[:,:,idoy],4,kc_list,Eto[:,:,idoy],sb_old,Pr[:,:,idoy],wb_old,Sa,D,p[:,:,idoy],Fsnm,Tx[:,:,idoy],Txsnm,istart0,istart1,idoy)                                        
-        # vars5=EtaCalc_warmest(eta_class[:,:,idoy],5,kc_list,Eto[:,:,idoy],sb_old,Pr[:,:,idoy],wb_old,Sa,D,p[:,:,idoy],Fsnm,Tx[:,:,idoy],Txsnm)
-        # results_list.append((vars1,vars2,vars3,vars4,vars5))
+        # may want to use this for when parallel=False, need to pass the parallel flag to LGPCalc
+
         # vars1=dask.delayed(EtaCalc_snow)(eta_class[:,:,idoy],1,kc_list,Eto[:,:,idoy],sb_old,Pr[:,:,idoy],wb_old,Sa,D,p[:,:,idoy])
         # vars2=dask.delayed(EtaCalc_snowmelting)(eta_class[:,:,idoy],2,kc_list,Eto[:,:,idoy],sb_old,Pr[:,:,idoy],wb_old,Sa,D,p[:,:,idoy],Fsnm,Tx[:,:,idoy],Txsnm)                                                                       
         # vars3=dask.delayed(EtaCalc_cold)(eta_class[:,:,idoy],3,kc_list,Eto[:,:,idoy],sb_old,Pr[:,:,idoy],wb_old,Sa,D,p[:,:,idoy],Fsnm,Tx[:,:,idoy],Txsnm)                                                               
@@ -988,82 +948,65 @@ def EtaCalc(im_mask,Tx,islgp,Pr,Txsnm,Fsnm,Eto,wb_old,sb_old,istart0,istart1,Sa,
         # vars5=dask.delayed(EtaCalc_warmest)(eta_class[:,:,idoy],5,kc_list,Eto[:,:,idoy],sb_old,Pr[:,:,idoy],wb_old,Sa,D,p[:,:,idoy],Fsnm,Tx[:,:,idoy],Txsnm)
         # task_list=[vars1,vars2,vars3,vars4,vars5]
         # results_list=dask.compute(*task_list) 
-        eta_class_d=dask.delayed(eta_class[:,:,idoy])
-        Eto_d=dask.delayed(Eto[:,:,idoy])
-        sb_old_d=dask.delayed(sb_old)
-        Pr_d=dask.delayed(Pr[:,:,idoy])
-        wb_old_d=dask.delayed(wb_old)
-        p_d=dask.delayed(p[:,:,idoy])
-        Tx_d=dask.delayed(Tx[:,:,idoy])
-        vars1=dask.delayed(EtaCalc_snow)(eta_class_d,1,kc_list,Eto_d,sb_old_d,Pr_d,wb_old_d,Sa,D,p_d)
-        vars2=dask.delayed(EtaCalc_snowmelting)(eta_class_d,2,kc_list,Eto_d,sb_old_d,Pr_d,wb_old_d,Sa,D,p_d,Fsnm,Tx_d,Txsnm)                                                                       
-        vars3=dask.delayed(EtaCalc_cold)(eta_class_d,3,kc_list,Eto_d,sb_old_d,Pr_d,wb_old_d,Sa,D,p_d,Fsnm,Tx_d,Txsnm)                                                               
-        vars4=dask.delayed(EtaCalc_warm)(eta_class_d,4,kc_list,Eto_d,sb_old_d,Pr_d,wb_old_d,Sa,D,p_d,Fsnm,Tx_d,Txsnm,istart0,istart1,idoy)                                        
-        vars5=dask.delayed(EtaCalc_warmest)(eta_class_d,5,kc_list,Eto_d,sb_old_d,Pr_d,wb_old_d,Sa,D,p_d,Fsnm,Tx_d,Txsnm)
-        task_list=[vars1,vars2,vars3,vars4,vars5]
-        results_list=dask.compute(*task_list)
-        # print(len(results_list))
-        # print(len(results_list[0]))
-        # print(results_list[0][0][0])
-        # print(results_list[0][0][0].shape)
-        # print(results_list[0][0][1].shape)
-        # print(results_list[0][0][2].shape)
-        # print(results_list[0][0][3].shape)
-        # results_list.extend([vars1,vars2,vars3,vars4,vars5])
-        # results_list.extend(vars1)
-        # results_list.extend(vars2)
-        # results_list.extend(vars3)
-        # results_list.extend(vars4)
-        # results_list.extend(vars5)
-        # results_list.extend(EtaCalc_snow(eta_class[:,:,idoy],1,kc_list,Eto[:,:,idoy],sb_old,Pr[:,:,idoy],wb_old,Sa,D,p[:,:,idoy]))
-        # results_list.extend(EtaCalc_snowmelting(eta_class[:,:,idoy],2,kc_list,Eto[:,:,idoy],sb_old,Pr[:,:,idoy],wb_old,Sa,D,p[:,:,idoy],Fsnm,Tx[:,:,idoy],Txsnm))                                                                        
-        # results_list.extend(EtaCalc_cold(eta_class[:,:,idoy],3,kc_list,Eto[:,:,idoy],sb_old,Pr[:,:,idoy],wb_old,Sa,D,p[:,:,idoy],Fsnm,Tx[:,:,idoy],Txsnm))                                                               
-        # results_list.extend(EtaCalc_warm(eta_class[:,:,idoy],4,kc_list,Eto[:,:,idoy],sb_old,Pr[:,:,idoy],wb_old,Sa,D,p[:,:,idoy],Fsnm,Tx[:,:,idoy],Txsnm,istart0,istart1,idoy))                                        
-        # results_list.extend(EtaCalc_warmest(eta_class[:,:,idoy],5,kc_list,Eto[:,:,idoy],sb_old,Pr[:,:,idoy],wb_old,Sa,D,p[:,:,idoy],Fsnm,Tx[:,:,idoy],Txsnm))
-        # results_list.append(EtaCalc_snow(eta_class[:,:,idoy],1,kc_list,Eto[:,:,idoy],sb_old,Pr[:,:,idoy],wb_old,Sa,D,p[:,:,idoy]))
-        # results_list.append(EtaCalc_snowmelting(eta_class[:,:,idoy],2,kc_list,Eto[:,:,idoy],sb_old,Pr[:,:,idoy],wb_old,Sa,D,p[:,:,idoy],Fsnm,Tx[:,:,idoy],Txsnm))                                                                        
-        # results_list.append(EtaCalc_cold(eta_class[:,:,idoy],3,kc_list,Eto[:,:,idoy],sb_old,Pr[:,:,idoy],wb_old,Sa,D,p[:,:,idoy],Fsnm,Tx[:,:,idoy],Txsnm))                                                               
-        # results_list.append(EtaCalc_warm(eta_class[:,:,idoy],4,kc_list,Eto[:,:,idoy],sb_old,Pr[:,:,idoy],wb_old,Sa,D,p[:,:,idoy],Fsnm,Tx[:,:,idoy],Txsnm,istart0,istart1,idoy))                                        
-        # results_list.append(EtaCalc_warmest(eta_class[:,:,idoy],5,kc_list,Eto[:,:,idoy],sb_old,Pr[:,:,idoy],wb_old,Sa,D,p[:,:,idoy],Fsnm,Tx[:,:,idoy],Txsnm))
-        compute_times.append(timer()-start)
+        if parallel:      
+            start=timer()
+            results_list=[]
+            eta_class_d=dask.delayed(eta_class[:,:,idoy])
+            Eto_d=dask.delayed(Eto[:,:,idoy])
+            sb_old_d=dask.delayed(sb_old)
+            Pr_d=dask.delayed(Pr[:,:,idoy])
+            wb_old_d=dask.delayed(wb_old)
+            p_d=dask.delayed(p[:,:,idoy])
+            Tx_d=dask.delayed(Tx[:,:,idoy])
+            vars1=dask.delayed(EtaCalc_snow)(eta_class_d,1,kc_list,Eto_d,sb_old_d,Pr_d,wb_old_d,Sa,D,p_d)
+            vars2=dask.delayed(EtaCalc_snowmelting)(eta_class_d,2,kc_list,Eto_d,sb_old_d,Pr_d,wb_old_d,Sa,D,p_d,Fsnm,Tx_d,Txsnm)                                                                       
+            vars3=dask.delayed(EtaCalc_cold)(eta_class_d,3,kc_list,Eto_d,sb_old_d,Pr_d,wb_old_d,Sa,D,p_d,Fsnm,Tx_d,Txsnm)                                                               
+            vars4=dask.delayed(EtaCalc_warm)(eta_class_d,4,kc_list,Eto_d,sb_old_d,Pr_d,wb_old_d,Sa,D,p_d,Fsnm,Tx_d,Txsnm,istart0,istart1,idoy)                                        
+            vars5=dask.delayed(EtaCalc_warmest)(eta_class_d,5,kc_list,Eto_d,sb_old_d,Pr_d,wb_old_d,Sa,D,p_d,Fsnm,Tx_d,Txsnm)
+            task_list=[vars1,vars2,vars3,vars4,vars5]
+            results_list=dask.compute(*task_list)
+            compute_times.append(timer()-start)
 
-        # if idoy==0: times['EtaCalcs']=task_time
+            # aggregate results for each variable
+            start=timer()
+            arr_shape=results_list[0][0].shape
+            ETM_agg=np.empty(arr_shape,dtype='float32')
+            ETA_agg=np.empty(arr_shape,dtype='float32')
+            WB_agg=np.empty(arr_shape,dtype='float32')
+            SB_agg=np.empty(arr_shape,dtype='float32')
+            ETM_agg[:],ETA_agg[:],WB_agg[:],SB_agg[:]=np.float32(np.nan),np.float32(np.nan),np.float32(np.nan),np.float32(np.nan)
+            for icat,results in enumerate(results_list):
+                ETM_agg=np.where(eta_class[:,:,idoy]==icat+1,results[0],ETM_agg)
+                ETA_agg=np.where(eta_class[:,:,idoy]==icat+1,results[1],ETA_agg)
+                WB_agg=np.where(eta_class[:,:,idoy]==icat+1,results[2],WB_agg)
+                SB_agg=np.where(eta_class[:,:,idoy]==icat+1,results[3],SB_agg)
+            agg_times.append(timer()-start)            
 
-        start=timer()
-        # aggregate results for each variable
-        arr_shape=results_list[0][0].shape
-        # arr_shape=results_list[0][0][0].shape
-        # print(arr_shape)
-        ETM_agg=np.empty(arr_shape,dtype='float32')
-        ETA_agg=np.empty(arr_shape,dtype='float32')
-        WB_agg=np.empty(arr_shape,dtype='float32')
-        SB_agg=np.empty(arr_shape,dtype='float32')
-        ETM_agg[:],ETA_agg[:],WB_agg[:],SB_agg[:]=np.float32(np.nan),np.float32(np.nan),np.float32(np.nan),np.float32(np.nan)
+        else:
+            start=timer()
+            results_list=[]            
+            vars1=EtaCalc_snow(eta_class[:,:,idoy],1,kc_list,Eto[:,:,idoy],sb_old,Pr[:,:,idoy],wb_old,Sa,D,p[:,:,idoy])
+            vars2=EtaCalc_snowmelting(eta_class[:,:,idoy],2,kc_list,Eto[:,:,idoy],sb_old,Pr[:,:,idoy],wb_old,Sa,D,p[:,:,idoy],Fsnm,Tx[:,:,idoy],Txsnm)                                                                       
+            vars3=EtaCalc_cold(eta_class[:,:,idoy],3,kc_list,Eto[:,:,idoy],sb_old,Pr[:,:,idoy],wb_old,Sa,D,p[:,:,idoy],Fsnm,Tx[:,:,idoy],Txsnm)                                                               
+            vars4=EtaCalc_warm(eta_class[:,:,idoy],4,kc_list,Eto[:,:,idoy],sb_old,Pr[:,:,idoy],wb_old,Sa,D,p[:,:,idoy],Fsnm,Tx[:,:,idoy],Txsnm,istart0,istart1,idoy)                                        
+            vars5=EtaCalc_warmest(eta_class[:,:,idoy],5,kc_list,Eto[:,:,idoy],sb_old,Pr[:,:,idoy],wb_old,Sa,D,p[:,:,idoy],Fsnm,Tx[:,:,idoy],Txsnm)
+            results_list.append([vars1,vars2,vars3,vars4,vars5])            
+            compute_times.append(timer()-start)
 
-        # for icat,results in enumerate(results_list[0]):
-        for icat,results in enumerate(results_list):
-            # print(len(results),results[0].shape)
-            ETM_agg=np.where(eta_class[:,:,idoy]==icat+1,results[0],ETM_agg)#.astype('float32')
-            ETA_agg=np.where(eta_class[:,:,idoy]==icat+1,results[1],ETA_agg)#.astype('float32')
-            WB_agg=np.where(eta_class[:,:,idoy]==icat+1,results[2],WB_agg)#.astype('float32')
-            SB_agg=np.where(eta_class[:,:,idoy]==icat+1,results[3],SB_agg)#.astype('float32')
-        # print(ETM_agg.dtype)
-        # print(np.nan_to_num(ETM_agg).min(),np.nan_to_num(ETM_agg).max())
-        # print(np.nan_to_num(ETA_agg).min(),np.nan_to_num(ETA_agg).max())
-        # print(np.nan_to_num(WB_agg).min(),np.nan_to_num(WB_agg).max())
-        # print(np.nan_to_num(SB_agg).min(),np.nan_to_num(SB_agg).max())
-        # print('1',results_list[0])
-        # print('-----------------------------------')
-        # print('2',results_list[0][0])
-        # print('-----------------------------------')
-        # print('3',results_list[0][0][0])
-        # print('-----------------------------------')
-        # print('4',results_list[0][0][0][0])
-        # print('-----------------------------------')
-
-        agg_times.append(timer()-start)
-        # if idoy==0: times['daily agg']=task_time        
-        # print(ETM_agg.dtype,ETA_agg.dtype,WB_agg.dtype,SB_agg.dtype)
+            # aggregate results for each variable
+            start=timer()
+            arr_shape=results_list[0][0][0].shape
+            ETM_agg=np.empty(arr_shape,dtype='float32')
+            ETA_agg=np.empty(arr_shape,dtype='float32')
+            WB_agg=np.empty(arr_shape,dtype='float32')
+            SB_agg=np.empty(arr_shape,dtype='float32')
+            ETM_agg[:],ETA_agg[:],WB_agg[:],SB_agg[:]=np.float32(np.nan),np.float32(np.nan),np.float32(np.nan),np.float32(np.nan)
+            for icat,results in enumerate(results_list[0]):
+                ETM_agg=np.where(eta_class[:,:,idoy]==icat+1,results[0],ETM_agg)
+                ETA_agg=np.where(eta_class[:,:,idoy]==icat+1,results[1],ETA_agg)
+                WB_agg=np.where(eta_class[:,:,idoy]==icat+1,results[2],WB_agg)
+                SB_agg=np.where(eta_class[:,:,idoy]==icat+1,results[3],SB_agg)
+            agg_times.append(timer()-start)
         
         ETM_list.append(ETM_agg)
         ETA_list.append(ETA_agg)
@@ -1073,14 +1016,14 @@ def EtaCalc(im_mask,Tx,islgp,Pr,Txsnm,Fsnm,Eto,wb_old,sb_old,istart0,istart1,Sa,
         wb_old=WB_agg.copy()
         sb_old=SB_agg.copy()
     task_time0=timer()-start0
-    # print('day loop complete')
+
     times['chunk_size']=Tx.shape
     times['complete day loop']=task_time0   
     times['avg daily compute'] = np.array(compute_times).mean()
     times['avg daily agg'] = np.array(agg_times).mean()
     del im_mask,Tx,Pr,Txsnm,Fsnm,Eto,wb_old,sb_old,istart0,istart1,Sa,D,p,kc_list,lgpt5,eta_class
     del vars1,vars2,vars3,vars4,vars5,results_list,ETM_agg,ETA_agg,WB_agg,SB_agg
-    # print('completing comp on chunk')
+
     start=timer()
     ETM=np.stack(ETM_list,axis=-1,dtype='float32') # stack on last dim (time)
     ETA=np.stack(ETA_list,axis=-1,dtype='float32') # stack on last dim (time)
@@ -1105,13 +1048,6 @@ def EtaCalc(im_mask,Tx,islgp,Pr,Txsnm,Fsnm,Eto,wb_old,sb_old,istart0,istart1,Sa,
     times['append']=task_time  
     # print('ETMx,ETAx',ETMx.dtype,ETAx.dtype)
     del ETM, ETA
-
-    # start=timer()
-    # islgp=np.where(Ta>=5,np.int8(1),np.int8(0))  #KLG
-    # task_time=timer()-start
-    # times['islgp']=task_time  
-    # print('islgp',islgp.dtype)
-
     # print(ETAx.shape,ETMx.shape)
 
     start=timer()
@@ -1120,7 +1056,6 @@ def EtaCalc(im_mask,Tx,islgp,Pr,Txsnm,Fsnm,Eto,wb_old,sb_old,istart0,istart1,Sa,
     task_time=timer()-start
     times['xx,yy']=task_time 
     # print('xx,yy',xx.dtype,yy.dtype)
-    # print(xx,yy)
     del ETMx,ETAx
 
     start=timer()
@@ -1138,7 +1073,7 @@ def EtaCalc(im_mask,Tx,islgp,Pr,Txsnm,Fsnm,Eto,wb_old,sb_old,istart0,istart1,Sa,
     del lgp_whole   
     # print('lgp_tot',lgp_tot.dtype)
  
-    print(times)   
+    # print(times)   
     return lgp_tot
     # return ETAx     
 
@@ -1150,66 +1085,6 @@ def EtaCalc(im_mask,Tx,islgp,Pr,Txsnm,Fsnm,Eto,wb_old,sb_old,istart0,istart1,Sa,
     # e.g. result_list[1][2] is wb from the EtaCalc_snowmelting function
     # print('in LGPCalc before parallel compute', psutil.virtual_memory().free/1E9)
     # print('in LGPCalc, computing ET components for day',idoy+1)
-    start=timer()
-    result_list=dask.compute(*task_list) # computing in parallel
-    task_time=timer()-start
-    print('time spent computing',task_time)
-    # print('in LGPCalc after parallel compute', psutil.virtual_memory().free/1E9)
-    # now combine results for each variable into a single array
-    # initialize
-    # Etm_new = np.empty(im_mask.shape)  #KLG
-    # Eta_new = np.empty(im_mask.shape)  #KLG
-    # Wb_new = np.empty(im_mask.shape)  #KLG
-    # Wx_new = np.empty(im_mask.shape)  #KLG
-    # Sb_new = np.empty(im_mask.shape)  #KLG
-    # kc_new = np.empty(im_mask.shape)  #KLG
-    # Etm_new[:],Eta_new[:],Wb_new[:],Wx_new[:],Sb_new[:],kc_new[:]=np.nan,np.nan,np.nan,np.nan,np.nan,np.nan  #KLG
-
-    # # combine
-    # for i,cat in enumerate(np.arange(ncats)+1):
-    #     Etm_new=np.where(eta_class==cat,result_list[i][0],Etm_new)
-    #     Eta_new=np.where(eta_class==cat,result_list[i][1],Eta_new)                                                                                        
-    #     Wb_new=np.where(eta_class==cat,result_list[i][2],Wb_new)                                                                                        
-    #     Wx_new=np.where(eta_class==cat,result_list[i][3],Wx_new)                                                                                        
-    #     Sb_new=np.where(eta_class==cat,result_list[i][4],Sb_new)                                                                                        
-    #     kc_new=np.where(eta_class==cat,result_list[i][5],kc_new)      
-    start=timer()
-    def aggregate_classes(arr_shape,ncats,res_list,var_index):
-        var_new=np.empty(arr_shape,dtype='float32')
-        var_new[:]=np.nan
-        for i,cat in enumerate(np.arange(ncats)+1):
-            var_new=np.where(eta_class==cat,np.float32(res_list[i][var_index]),np.float32(var_new))
-            # var_new=np.where(eta_class==cat,res_list[i][var_index].astype('float32'),np.nan)
-            # print(var_new.dtype)
-        return var_new
-
-    result_list=dask.delayed(result_list)
-    task_list=[]
-    task = dask.delayed(aggregate_classes)(Tx_da.shape,ncats,result_list,0) # delayed Etm_new aggregation
-    task_list.append(task)
-    task = dask.delayed(aggregate_classes)(Tx_da.shape,ncats,result_list,1) # delayed Eta_new aggregation
-    task_list.append(task)
-    task = dask.delayed(aggregate_classes)(Tx_da.shape,ncats,result_list,2) # delayed Wb_new aggregation
-    task_list.append(task)
-    # task = dask.delayed(aggregate_classes)(im_mask.shape,ncats,result_list,3) # delayed Wx_new aggregation
-    # task_list.append(task)
-    # task = dask.delayed(aggregate_classes)(im_mask.shape,ncats,result_list,4) # delayed Sb_new aggregation
-    # task_list.append(task)
-    # task = dask.delayed(aggregate_classes)(im_mask.shape,ncats,result_list,5) # delayed kc_new aggregation
-    # task_list.append(task)
-    task = dask.delayed(aggregate_classes)(Tx_da.shape,ncats,result_list,3) # delayed Sb_new aggregation
-    task_list.append(task)
-
-    # print('in LGPCalc, aggregating ET components for day',idoy+1)
-    data_out=dask.compute(*task_list)
-    task_time=timer()-start
-    print('time spent aggregating',task_time)
-
-    # # print('in LGPCalc after aggregation', psutil.virtual_memory().free/1E9)
-    # # return Etm_new,Eta_new,Wb_new,Wx_new,Sb_new,kc_new 
-    # # return data_out[0],data_out[1],data_out[2],data_out[3],data_out[4],data_out[5]
-    return data_out[0],data_out[1],data_out[2],data_out[3]#,eta_class#
-    # return 0,0,0,0
 
 
 # @jit(nopython=True)
