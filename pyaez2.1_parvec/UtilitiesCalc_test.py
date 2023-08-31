@@ -11,9 +11,6 @@ try:
     import gdal
 except:
     from osgeo import gdal
-# import dask.array as da
-# import dask
-# from dask.distributed import Client
 from collections import OrderedDict
 import psutil
 
@@ -44,6 +41,9 @@ class UtilitiesCalc(object):
         Returns:
             1D NumPy: Daily climate data vector
         """        
+        #####################################################################
+        ##### THIS FUNCTION NOT YET UPDATED FOR VECTORIZED/PARALLELIZED #####
+        #####################################################################
 
         doy_middle_of_month = np.arange(0,12)*30 + 15 # Calculate doy of middle of month
 
@@ -67,12 +67,10 @@ class UtilitiesCalc(object):
         Returns:
             3D NumPy: Monthly data array of dims (ny,nx,12)
         """        
-
         if self.parallel:
             import dask
             # delay the input data so it's copied once instead of at each call of the function
             daily_arr=dask.delayed(daily_arr)
-            # daily_arr=daily_arr.to_delayed()
 
             # a nested ordered dictionary containing info for each month
             month_info = OrderedDict({ 'Jan': {'ndays':31,'lim_lo':0,'lim_hi':31},
@@ -126,12 +124,12 @@ class UtilitiesCalc(object):
             monthly_arr[:,:,11] = daily_arr[:,:,334:].sum(axis=2)/31            
 
         return monthly_arr
-        # return monthly_vector.compute()
 
-    def generateLatitudeMap(self, lat_min, lat_max, location, im_height, im_width):  #KLG
-    # def generateLatitudeMap(self, lat_min, lat_max, im_height, im_width):  
-    # def generateLatitudeMap(self, lats, location):  #KLG
-
+    def generateLatitudeMap(self, lat_min, lat_max, location, im_height, im_width):    
+    # def generateLatitudeMap(self, lats, location):    
+        # precision issues can arise from recalculating lat/lon, why not just take a 1D lat array of 
+        # pixel centers as an input instead of recreating them with linspace? Then, use this to make 
+        # the 2D array:     lat_map=np.broadcast_to(lats[:,np.newaxis],(im_height,im_width))  
         """Create latitude map from input geographical extents
 
         Args:
@@ -149,36 +147,28 @@ class UtilitiesCalc(object):
         # [X_map,Y_map] = np.meshgrid(lon_lim,lat_lim)  
         # lat_map = np.flipud(Y_map) 
 
-        # Generate a 2D array of latitude  #KLG
+        # Generate a 2D array of latitude    
         # for parallel computing
         if self.parallel:
             import dask.array as da
-            # For lat_min, lat_max values given at pixel centers  #KLG
+            # For lat_min, lat_max values given at pixel centers    
             if location:
-                lat_vals=da.linspace(lat_min, lat_max, im_height).astype('float32')  #KLG
-                # lat_map=da.tile(lat_vals[:,np.newaxis],(1,im_width)).rechunk(chunks=self.chunk2D)  #KLG
+                lat_vals=da.linspace(lat_min, lat_max, im_height).astype('float32')    
                 lat_map=da.broadcast_to(lat_vals[:,np.newaxis],(im_height,im_width),chunks=self.chunk2D)            
-            # For lat_min, lat_max values given at exterior pixel edges  #KLG
+            # For lat_min, lat_max values given at exterior pixel edges    
             if ~location:
-                lat_step=(lat_max-lat_min)/im_height  #KLG
-                lat_vals = da.linspace(lat_min+lat_step/2, lat_max-lat_step/2, im_height)  #KLG
-                # lat_map=da.tile(lat_vals[:,np.newaxis],(1,im_width)).rechunk(chunks=self.chunk2D)  #KLG     
+                lat_step=(lat_max-lat_min)/im_height    
+                lat_vals = da.linspace(lat_min+lat_step/2, lat_max-lat_step/2, im_height)    
                 lat_map=da.broadcast_to(lat_vals[:,np.newaxis],(im_height,im_width),chunks=self.chunk2D)            
         # for serial computing
         else:     
             if location:
-                lat_vals=np.linspace(lat_min, lat_max, im_height).astype('float32')  #KLG
-                # lat_map=np.tile(lat_vals[:,np.newaxis],(1,im_width))  #KLG
+                lat_vals=np.linspace(lat_min, lat_max, im_height).astype('float32')    
                 lat_map=np.broadcast_to(lat_vals[:,np.newaxis],(im_height,im_width))                
             if ~location:
-                lat_step=(lat_max-lat_min)/im_height  #KLG
-                lat_vals = np.linspace(lat_min+lat_step/2, lat_max-lat_step/2, im_height)  #KLG
-                # lat_map=np.tile(lat_vals[:,np.newaxis],(1,im_width))  #KLG                
-                lat_map=np.broadcast_to(lat_vals[:,np.newaxis],(im_height,im_width))                
-
-        # precision issues can arise from above, why not just take a 1D lat array of pixel centers as an input  #KLG
-        # instead of recreating them with linspace. Then, use below to make the 2D array  #KLG
-        # lat_map=np.broadcast_to(lats[:,np.newaxis],(im_height,im_width))  #KLG
+                lat_step=(lat_max-lat_min)/im_height    
+                lat_vals = np.linspace(lat_min+lat_step/2, lat_max-lat_step/2, im_height)    
+                lat_map=np.broadcast_to(lat_vals[:,np.newaxis],(im_height,im_width))                  
         return lat_map
 
     def classifyFinalYield(self, est_yield):
@@ -258,7 +248,7 @@ class UtilitiesCalc(object):
         return wind_speed * (4.87/np.log(67.8*altitude-5.42))
 
 
-    def smoothDailyTemp(self, day_start, day_end, mask, daily_T):  #KLG
+    def smoothDailyTemp(self, day_start, day_end, mask, daily_T):    
         """create smoothed daily temperature curve using 5th degree spline 
 
         Args:
@@ -270,7 +260,6 @@ class UtilitiesCalc(object):
         Returns:
             3D NumPy array: 5th degree spline smoothed temperature
         """        
-
         nlats=daily_T.shape[0]
         nlons=daily_T.shape[1] 
         ndays=daily_T.shape[2] 
@@ -278,21 +267,21 @@ class UtilitiesCalc(object):
             import dask
             import dask.array as da
 
-            # spline fitting
+            # spline fitting, isolate the computation in a func so we can delay/parallelize
             def polyfit_polyval(x,y,deg):
                 coefs=np.polynomial.polynomial.polyfit(x,y,deg=deg).astype('float32')
                 spline=np.polynomial.polynomial.polyval(x,coefs).astype('float32')
                 return spline.astype('float32') 
 
+            # prepare func inputs
             deg=5  # polynomial degree for spline fitting
-            days = np.arange(day_start,day_end+1).astype('int32') # x values  #KLG
+            days = np.arange(day_start,day_end+1).astype('int32') # x values    
             npoints=nlats*self.chunk3D[1]
             
             with dask.config.set(**{'array.slicing.split_large_chunks': False}):
-                # replace any nan in the data with zero (nans may be present under a mask) #KLG
+                # replace any nan in the data with zero (nans may be present under a mask)   
                 mask3D=da.broadcast_to(mask[:,:,np.newaxis],(nlats,nlons,ndays)).rechunk(chunks=self.chunk3D)#.astype('int8')       
-                data=da.where(mask3D==0,np.float32(0),np.float32(daily_T))   #KLG
-
+                data=da.where(mask3D==0,np.float32(0),np.float32(daily_T))     
                 # collapse lat and lon because polyfit and polyval only work on data up to 2 dimensions            
                 data2D=data.transpose(2,0,1).reshape(ndays,-1).rechunk({0:-1,1:npoints})#.astype('float32')
 
@@ -300,33 +289,37 @@ class UtilitiesCalc(object):
             days=dask.delayed(days)
             delayed_chunks=data2D.to_delayed().ravel()
             
+            # create list of delayed compute tasks
             task_list = [dask.delayed(polyfit_polyval)(days,dchunk,deg) for dchunk in delayed_chunks]
+            
+            # compute in parallel
             # print('in UtilitiesCalc, computing interp_daily_temp in parallel')
             results_list=dask.compute(*task_list)
+            
+            # concatenate resulting chunks
             interp_daily_temp=np.concatenate(results_list)
             del results_list
-            interp_daily_temp=interp_daily_temp.reshape(nlats,nlons,ndays)#.rechunk(chunks=self.chunk3D)#.astype('float32')  #KLG         
 
+            # 2D back to 3D
+            interp_daily_temp=interp_daily_temp.reshape(nlats,nlons,ndays)           
         else:
-            days = np.arange(day_start,day_end+1) # x values  #KLG
+            days = np.arange(day_start,day_end+1) # x values    
+            # replace any nan (i.e. if there is a mask) in the data with zero    
+            mask3D=np.broadcast_to(mask[:,:,np.newaxis],(nlats,nlons,ndays))
+            data=np.where(mask3D==0,0,daily_T)     
+            # collapse lat and lon because polyfit and polyval only work on data up to 2 dimensions
+            data2D=data.transpose(2,0,1).reshape(days.shape[0],-1) # every column is a set of y values    
+            del data    
 
-            # replace any nan (i.e. if there is a mask) in the data with zero  #KLG
-            # mask3D = np.tile(mask[:,:,np.newaxis], (1,1,days.shape[0]))  #KLG
-            mask3D=da.broadcast_to(mask[:,:,np.newaxis],(nlats,nlons,ndays))#.astype('int8')  
-            data=np.where(mask3D==0,0,daily_T)   #KLG
-            data2D=data.transpose(2,0,1).reshape(days.shape[0],-1) # every column is a set of y values  #KLG
-            del data  #KLG
+            # do the spline fitting    
+            quad_spl=np.polynomial.polynomial.polyfit(days,data2D,deg=5)    
+            interp_daily_temp=np.polynomial.polynomial.polyval(days,quad_spl)    
 
-            # do the spline fitting  #KLG
-            quad_spl=np.polynomial.polynomial.polyfit(days,data2D,deg=5)  #KLG
-            interp_daily_temp=np.polynomial.polynomial.polyval(days,quad_spl)  #KLG
-
-            #reshape  #KLG
-            interp_daily_temp=interp_daily_temp.reshape(mask3D.shape[0],mask3D.shape[1],-1).astype('float32')  #KLG
+            # reshape and reapply mask   
+            interp_daily_temp=interp_daily_temp.reshape(mask3D.shape[0],mask3D.shape[1],-1).astype('float32')    
             interp_daily_temp=np.where(mask3D==0,np.nan,interp_daily_temp)
-        
-        return interp_daily_temp#.astype('float32')   #KLG
-        # return results_list
+
+        return interp_daily_temp#.astype('float32')     
 
     def setChunks(self,nchunks,shape,reduce_mem_used):
         nlats=shape[0]
@@ -335,59 +328,38 @@ class UtilitiesCalc(object):
 
         if nchunks:
             # user override for default nchunks
-            # how many longitudes per chunk
-            nlons_chunk=int(np.ceil(nlons/nchunks))
+            nlons_chunk=int(np.ceil(nlons/nchunks)) # how many longitudes per chunk
         else:
-            # # default nchunks based on system properties    
-            # RAMinfo=psutil.virtual_memory() # returns info about system RAM in bytes
-            # threads=psutil.cpu_count()  # return system number of threads 
-            # scale_factor=100             # how much RAM per thread is needed for computation, defined as a factor of the size of a 3D data chunk
-            # if reduce_mem_used: scale_factor=scale_factor+10
-            # buff=250000000            # amount of RAM (bytes) to reduce RAM.free to be safe (.25GB) 
-
-            # chunklim=(RAMinfo.free - buff)/threads/scale_factor  # max size (bytes) per 3D data chunk for computation to succeed on each thread
-            # npoints=chunklim/4  # number of data points that can fit in the chunklim (4 bytes is the size of one float32 data point)
-            
-            # testing defining chunk by computing mem per thread
+            # default nchunks based on system properties    
             RAMinfo=psutil.virtual_memory() # returns info about system RAM in bytes
-            threads=psutil.cpu_count()  # return system number of threads            
-            func_scale_factor=8
-            dask_scale_factor=2
-            # the following should eventually be scaled to a certain size required RAM
-            # e.g. the multiplier should mean that RAM usage is kept under xGB
+            threads=psutil.cpu_count()  # returns system number of threads            
+            func_scale_factor=8  # estimated based on RAM usage of setDailyClimateData
+            dask_scale_factor=2  # dask likely stores at least two chunks per thread
+
+            # the following should eventually be scaled to a certain size of required RAM
+            # e.g. the multiplier (currently 2) should mean that RAM usage is kept under xGB
             if reduce_mem_used: func_scale_factor=func_scale_factor*2
-            buff=0#.25E9
-            RAMperthread= (RAMinfo.free-buff)/threads
+
+            buff=0#.25E9 # RAM buffer if needed in the future
+            RAMperthread = (RAMinfo.free-buff)/threads
             chunklim=RAMperthread/func_scale_factor/dask_scale_factor
             npoints=chunklim/4
 
-            # we chunk only by longitude
-            # so npoints must contain all lats and all times
+            # we chunk only by longitude, so npoints must contain all lats and all times
             nlons_chunk=int(np.floor(npoints/nlats/ntimes)) # number of longitudes per chunk 
             nchunks=int(np.ceil(nlons/nlons_chunk))
 
-            # print('computed optimized nchunks,nlons',nchunks,nlons_chunk)
-            
             # making sure we have at least as many chunks as threads
             if nchunks < threads:
                 nchunks=threads
                 nlons_chunk=int(np.ceil(nlons/nchunks))
 
-
-
         # dimensions of a single chunk for 3D and 2D arrays, -1 means all latitudes and all times
         chunk3D=(-1,nlons_chunk,-1)
         chunk2D=(-1,nlons_chunk)
 
+        # approximate size in MB of a 3D array chunk
         chunksize3D_MB=nlats*nlons_chunk*ntimes*4/1E6
-
-        # print('available RAM =',RAMinfo.free/1E9,
-        #     'GB, RAM per thread =',(RAMinfo.free-buff)/threads/1E9,
-        #     'GB, 3D chunk size limit = ',chunklim/1E6,
-        #     'MB, chunksize3D =',chunksize3D_MB,
-        #     'MB, chunk3D =',chunk3D,
-        #     ', chunk2D =',chunk2D,
-        #     'nchunks =',nchunks)
 
         return chunk2D, chunk3D, chunksize3D_MB, nchunks
 

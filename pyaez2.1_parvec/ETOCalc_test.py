@@ -7,62 +7,26 @@ the climatic data provided by the PyAEZ user.
 
 """
 import numpy as np
-# import numba as nb
 
 class ETOCalc(object):
-    # def __init__(self, cycle_begin, cycle_end, latitude, altitude):
-    #     """Initiate a ETOCalc Class instance
+    # __init__ and setClimateData functions removed to save RAM
 
-    #     Args:
-    #         cycle_begin (int): Julian day for the beginning of crop cycle
-    #         cycle_end (int): Julian day for the ending of crop cycle
-    #         latitude (float): a latitude value
-    #         altitude (float): an altitude value
-    #     """        
-    #     self.cycle_begin = cycle_begin
-    #     self.cycle_end = cycle_end
-    #     self.latitude = latitude
-    #     self.alt = altitude
-
-    # def setClimateData(self, min_temp, max_temp, wind_speed, short_rad, rel_humidity):
-    #     """Load the climatic (point) data into the Class
-
-    #     Args:
-    #         min_temp (float): Minimum temperature [Celcius]
-    #         max_temp (float): Maximum temperature [Celcius]
-    #         wind_speed (float): Windspeed at 2m altitude [m/s]
-    #         short_rad (float): Radiation [MJ/m2.day]
-    #         rel_humidity (float): Relative humidity [decimal percentage]
-    #     """        
-
-    #     self.minT_daily = min_temp # Celcius
-    #     self.maxT_daily = max_temp # Celcius
-    #     self.windspeed_daily = wind_speed # m/s at 2m
-    #     self.shortRad_daily = short_rad # MJ/m2.day
-    #     self.rel_humidity = rel_humidity # Fraction
-
-    # @staticmethod
-    # @nb.jit(nopython=True)
-    # def calculateETONumba(cycle_begin, cycle_end, latitude, alt,  minT_daily, maxT_daily, windspeed_daily, shortRad_daily, rel_humidity):
-    # def calculateETO(self,dstart,dend,cdims,lat,alt,tmn,tmx,u2m,srad,rh):  #KLG
-    def calculateETO(self,dstart,dend,lat,alt,tmn,tmx,u2m,srad,rh):  #KLG
-        # numba doesn't speed this up in time tests  #KLG
-        # removing in favor of vectorization which will allow chunking with dask for speed  #KLG
-
+    def calculateETO(self,dstart,dend,lat,alt,tmn,tmx,u2m,srad,rh):    
+        # numba doesn't speed this up in time tests 
+        # removing in favor of vectorization which also allows chunking with dask for speed 
+        # this calculation has been reordered to decrease memory use
         """Calculate the reference evapotranspiration with Penmann-Monteith Equation
 
         Returns:
             ## float: ETo of a single pixel (function is called pixel-wise)
-            float: ETo of each pixel  #KLG
+            float: ETo of each pixel    
         """   
-        # this calculation has been reordered to optimize memory use
-
         nlats=tmn.shape[0]
         nlons=tmn.shape[1]
-        dayoyr = np.arange(dstart, dend+1)  # Julien Days #KLG
-        ndays=len(dayoyr)  #KLG        
+        dayoyr = np.arange(dstart, dend+1)  # Julien Days   
+        ndays=len(dayoyr)            
 
-        # (a) calculate extraterrestrial radiation 
+        # calculate extraterrestrial radiation 
         #-------------------------------------
         latr = (lat * np.pi/180.).astype('float32')
         latr = np.broadcast_to(latr[:,:,np.newaxis],(nlats,nlons,ndays))
@@ -93,7 +57,8 @@ class ETOCalc(object):
         # print('omg,sdst,ra',omg.dtype,sdst.dtype,ra.dtype)
         del sdst, omg, xx, yy
 
-        # (b) Mean Saturation Vapor Pressure derived from air temperature
+        # Mean Saturation Vapor Pressure derived from air temperature
+        #-------------------------------------
         es_tmin = 0.6108 * np.exp((17.27 * tmn) / (tmn + 237.3))
         es_tmax = 0.6108 * np.exp((17.27 * tmx) / (tmx + 237.3))
         es = 0.5*(es_tmin + es_tmax)
@@ -101,34 +66,37 @@ class ETOCalc(object):
         del rh
         # print('es_tmin,es_tmax,es,ea',es_tmin.dtype,es_tmax.dtype,es.dtype,ea.dtype)
 
-        # (c) slope vapour pressure curve
+        # slope vapour pressure curve
+        #-------------------------------------
         dlmx = 4098. * es_tmax / (tmx + 237.3)**2
         del es_tmax
         dlmn = 4098. * es_tmin / (tmn + 237.3)**2
         del es_tmin
         dl = 0.5* (dlmx + dlmn)
         # print('dlmx,dlmn,dl',dlmx.dtype,dlmn.dtype,dl.dtype)
-        del dlmx,dlmn  #KLG
+        del dlmx,dlmn    
 
-        # (d) solar radiation Rs (0.25, 0.50 Angstrom coefficients)
+        # solar radiation Rs (0.25, 0.50 Angstrom coefficients)
+        #-------------------------------------
         # rs = (0.25 + (0.50 * (sd/dayhr))) * ra
         alt = np.broadcast_to(alt[:,:,np.newaxis],(nlats,nlons,ndays))
         rs0 = (0.75 + 0.00002 * alt) * ra
         # print('alt,rs0',alt.dtype,rs0.dtype)
       
-        # (e) net longwave radiation Rnl
-        # Stefan-Boltzmann constant [MJ K-4 m-2 day-1]
-        sub_cst = 4.903E-9
+        # net longwave radiation Rnl
+        #-------------------------------------
+        sub_cst = 4.903E-9 # Stefan-Boltzmann constant [MJ K-4 m-2 day-1]
         with np.errstate(invalid='ignore',divide='ignore'):
             rs_div_ds0=(srad/rs0)
         del rs0
         rnl = (((273.16+tmx)**4)+((273.16 + tmn)**4)) * \
             (0.34 - (0.14*(ea**0.5))) * \
             ((1.35*(rs_div_ds0))-0.35)*sub_cst/2
-        del rs_div_ds0#,tmx,tmn
+        del rs_div_ds0
 
-        # (f) net shortwave radiation Rns = (1 - alpha) * Rs
+        # net shortwave radiation Rns = (1 - alpha) * Rs
         # (alpha for grass = 0.23)
+        #-------------------------------------
         rns = 0.77 * srad
         del srad
         # (g) net radiation Rn = Rns - Rnl
@@ -136,21 +104,21 @@ class ETOCalc(object):
         # print('rnl,rns,rn',rnl.dtype,rns.dtype,rn.dtype)
         del rns,rnl
 
-        # (h) soil heat flux [MJ/m2/day]
-        tavg = 0.5*(tmn + tmx)  # Averaged temperature  #KLG
+        # soil heat flux [MJ/m2/day]
+        #-------------------------------------
+        tavg = 0.5*(tmn + tmx)  # Averaged temperature    
         del tmn,tmx
-        ta_diff=np.diff(tavg,n=1,axis=2,prepend=tavg[:,:,-1:])  #KLG
-        G = 0.14 * ta_diff  #KLG
+        ta_diff=np.diff(tavg,n=1,axis=2,prepend=tavg[:,:,-1:])    
+        G = 0.14 * ta_diff    
         # print('tavg,ta_diff,G',tavg.dtype,ta_diff.dtype,G.dtype)
         del ta_diff
 
-        #(i)
+        #-------------------------------------        
         # Psychrometric constant
         lam = 2.501 - 0.002361 * tavg  # Latent heat of vaporization
 
         # Atmospheric pressure
         ap = 101.3*np.power(((293-(0.0065*alt))/293), 5.256)
-        # ap = np.broadcast_to(ap[:,:,np.newaxis],(nlats,nlons,ndays))
         del alt
 
         gam = 0.0016286 * ap/lam
@@ -173,15 +141,18 @@ class ETOCalc(object):
         gamst = gam * (1. + rhoc/rhoa)
         # print('rhoa,gamst',rhoa.dtype,gamst.dtype)
         del rhoa
+        #-------------------------------------
 
 
-        # (j) calculate aerodynamic and radiation terms of ET0
+        # calculate aerodynamic and radiation terms of ET0
+        #-------------------------------------
         et0ady = gam/(dl+gamst) * 900./(tavg+273.) * u2m * (es-ea)
         del gam,tavg,u2m,es,ea
 
         et0rad = dl/(dl+gamst) * (rn-G) / lam
         del dl,gamst,rn,G,lam
 
+        # calculate ET0
         et0 = et0ady + et0rad
         # print('et0ady,et0rad,et0',et0ady.dtype,et0rad.dtype,et0.dtype)
         del et0ady,et0rad
@@ -190,6 +161,3 @@ class ETOCalc(object):
         # print('et0',et0.dtype)
 
         return et0.astype('float32')
-
-    # def calculateETO(self):
-    #     return ETOCalc.calculateETONumba(self.cycle_begin, self.cycle_end, self.latitude, self.alt,  self.minT_daily, self.maxT_daily, self.windspeed_daily, self.shortRad_daily, self.rel_humidity)
