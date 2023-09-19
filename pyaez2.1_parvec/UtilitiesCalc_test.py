@@ -333,7 +333,7 @@ class UtilitiesCalc(object):
             # default nchunks based on system properties    
             RAMinfo=psutil.virtual_memory() # returns info about system RAM in bytes
             threads=psutil.cpu_count()  # returns system number of threads            
-            func_scale_factor=8  # estimated based on RAM usage of setDailyClimateData
+            func_scale_factor=20  # estimated based on RAM usage of setDailyClimateData
             dask_scale_factor=2  # dask likely stores at least two chunks per thread
 
             # the following should eventually be scaled to a certain size of required RAM

@@ -65,7 +65,7 @@ class ClimateRegime(object):
             no_data_value (int): pixels with this value will be omitted during PyAEZ calculations
         """    
         if self.parallel:
-            import dask            
+            # import dask            
             self.im_mask = admin_mask.rechunk(chunks=self.chunk2D).astype('int8')
         else:
             self.im_mask = admin_mask.astype('int8')
@@ -191,25 +191,42 @@ class ClimateRegime(object):
             ### CALCULATE P_BY_PET_MONTHLY ####
             # same for P_by_PET_monthly, we only use monthly later
             # chunk and delay inputs
-            pr_delayed=precipitation.rechunk(chunks=self.chunk3D).to_delayed().ravel()
-            pet_delayed=da.from_array(self.pet_daily,chunks=self.chunk3D).to_delayed().ravel()
-            mask_delayed=da.broadcast_to(self.im_mask[:,:,np.newaxis],(self.im_height,self.im_width,12),chunks=(self.chunk2D[0],self.chunk2D[1],12)).to_delayed().ravel()
+            # pr_delayed=precipitation.rechunk(chunks=self.chunk3D).to_delayed().ravel()
+            # pet_delayed=da.from_array(self.pet_daily,chunks=self.chunk3D).to_delayed().ravel()
+            # mask_delayed=da.broadcast_to(self.im_mask[:,:,np.newaxis],(self.im_height,self.im_width,12),chunks=(self.chunk2D[0],self.chunk2D[1],12)).to_delayed().ravel()
+            pr=precipitation.rechunk(chunks=self.chunk3D) # dask array
+            pet=da.from_array(self.pet_daily,chunks=self.chunk3D)  # dask array
+            # mask3D=da.broadcast_to(self.im_mask[:,:,np.newaxis],(self.im_height,self.im_width,12),chunks=(self.chunk2D[0],self.chunk2D[1],12)) # numpy array
+            # mask_monthly=mask_monthly.compute() # numpy array
+            with np.errstate(divide='ignore', invalid='ignore'):
+                P_by_PET_daily = np.nan_to_num(pr/pet)  #dask array
+                P_by_PET_monthly = obj_utilities.averageDailyToMonthly(P_by_PET_daily)  # compute monthly values (np array)
 
-            # put the comp inside a function that we can delay
-            def calc_P_by_PET_monthly(pet,pr,mask,obj_util):
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    pet=np.where(pet==0,np.float32(np.nan),pet) # replace inf in the P_by result with nan
-                    P_by_PET_daily = pr/pet # daily values
-                    P_by_PET_monthly = obj_util.averageDailyToMonthly(P_by_PET_daily)  # monthly values
-                    P_by_PET_monthly = np.where(mask,P_by_PET_monthly,np.float32(np.nan)) # implement mask
-                return P_by_PET_monthly
+            if self.set_mask:
+                mask_monthly=mask_monthly.compute() # numpy array
+                self.P_by_PET_monthly = np.where(mask_monthly,P_by_PET_monthly,np.float32(np.nan)) # implement mask
+            else:
+                self.P_by_PET_monthly=P_by_PET_monthly
+            del pr, pet, P_by_PET_daily,P_by_PET_monthly
+
+
+            # # put the comp inside a function that we can delay
+            # def calc_P_by_PET_monthly(pet,pr,mask,obj_util):
+            #     with np.errstate(divide='ignore', invalid='ignore'):
+            #         pet=np.where(pet==0,np.float32(np.nan),pet) # replace inf in the P_by result with nan
+            #         P_by_PET_daily = pr/pet # daily values
+            #         # P_by_PET_daily = np.nan_to_num(pr/pet)
+            #         P_by_PET_monthly = obj_util.averageDailyToMonthly(P_by_PET_daily)  # monthly values
+            #         P_by_PET_monthly = np.where(mask,P_by_PET_monthly,np.float32(np.nan)) # implement mask
+            #     return P_by_PET_monthly
             
-            task_list=[dask.delayed(calc_P_by_PET_monthly)(pet_chunk,pr_chunk,mask_chunk,obj_utilities) for pet_chunk,pr_chunk,mask_chunk in zip(pr_delayed,pet_delayed,mask_delayed)]
-            # print('in ClimateRegime, computing P_by_PET in parallel')
-            results=dask.compute(*task_list)
-            # concatenate chunks
-            self.P_by_PET_monthly=np.concatenate(results,axis=1) 
-            del results,task_list,pr_delayed,pet_delayed,mask_delayed
+            # task_list=[dask.delayed(calc_P_by_PET_monthly)(pet_chunk,pr_chunk,mask_chunk,obj_utilities) for pet_chunk,pr_chunk,mask_chunk in zip(pr_delayed,pet_delayed,mask_delayed)]
+            # # print('in ClimateRegime, computing P_by_PET in parallel')
+            # results=dask.compute(*task_list)
+            # # concatenate chunks
+            # self.P_by_PET_monthly=np.concatenate(results,axis=1) 
+            # del results,task_list,pr_delayed,pet_delayed,mask_delayed
+
         else:
             ### CALCULATE MEANT_MONTHLY_SEALEVEL ###
             meanT_daily_sealevel = self.meanT_daily + np.expand_dims(self.elevation/55,axis=2)      
@@ -218,8 +235,9 @@ class ClimateRegime(object):
 
             ### CALCULATE P_BY_PET_MONTHLY ####
             with np.errstate(invalid='ignore',divide='ignore'):
-                pet=np.where(self.pet_daily==0,np.float32(np.nan),self.pet_daily) # replace inf in the P_by result with nan
-                P_by_PET_daily = precipitation / pet
+                # pet=np.where(self.pet_daily==0,np.float32(np.nan),self.pet_daily) # replace inf in the P_by result with nan
+                # P_by_PET_daily = precipitation / pet
+                P_by_PET_daily = np.nan_to_num(precipitation / self.pet_daily)
                 self.P_by_PET_monthly = obj_utilities.averageDailyToMonthly(P_by_PET_daily)  # monthly values
 
             if self.set_mask:
@@ -239,6 +257,8 @@ class ClimateRegime(object):
         if self.set_mask:
             if self.parallel:
                 mask=self.im_mask.compute()
+                # already computed (dask-->np) mask_monthly above
+                # mask_monthly=mask_monthly.compute()
             else:
                 mask=self.im_mask
 
@@ -316,32 +336,43 @@ class ClimateRegime(object):
         thermal_climate=np.where((min_sealev_meanT>=18.) & (Ta_diff<15.) & (meanT>=20.),1,thermal_climate)   
         # Tropical highland   
         thermal_climate=np.where((min_sealev_meanT>=18.) & (Ta_diff<15.) & (meanT<20.) & (thermal_climate==0),2,thermal_climate)   
+        # thermal_climate=np.where((min_sealev_meanT>=18.) & (Ta_diff<15.) & (meanT<20.),2,thermal_climate)   
         
         # SubTropic   
         # Subtropics Low Rainfall   
         thermal_climate=np.where((min_sealev_meanT>=5.) & (nmo_ge_10C>=8) & (prsum<250) & (thermal_climate==0),3,thermal_climate)   
+        # thermal_climate=np.where((min_sealev_meanT>=5.) & (nmo_ge_10C>=8) & (prsum<250) ,3,thermal_climate)   
         # Subtropics Summer Rainfall   
-        thermal_climate=np.where((min_sealev_meanT>=5.) & (nmo_ge_10C>=8) & (latitude>=0) & (summer_PET0>=winter_PET0) & (thermal_climate==0),4,thermal_climate)   
-        thermal_climate=np.where((min_sealev_meanT>=5.) & (nmo_ge_10C>=8) & (latitude<0) & (summer_PET0<winter_PET0) & (thermal_climate==0),4,thermal_climate)   
+        thermal_climate=np.where((min_sealev_meanT>=5.) & (nmo_ge_10C>=8) & (prsum>=250)& (latitude>=0) & (summer_PET0>=winter_PET0) & (thermal_climate==0),4,thermal_climate)   
+        thermal_climate=np.where((min_sealev_meanT>=5.) & (nmo_ge_10C>=8) & (prsum>=250)& (latitude<0) & (summer_PET0<winter_PET0) & (thermal_climate==0),4,thermal_climate)   
+        # thermal_climate=np.where((min_sealev_meanT>=5.) & (nmo_ge_10C>=8) & (prsum>=250) & (latitude>=0) & (summer_PET0>=winter_PET0),4,thermal_climate)   
+        # thermal_climate=np.where((min_sealev_meanT>=5.) & (nmo_ge_10C>=8) & (prsum>=250) & (latitude<0) & (summer_PET0<winter_PET0),4,thermal_climate)   
         # Subtropics Winter Rainfall   
-        thermal_climate=np.where((min_sealev_meanT>=5.) & (nmo_ge_10C>=8) & (latitude>=0) & (summer_PET0<winter_PET0) & (thermal_climate==0),5,thermal_climate)   
-        thermal_climate=np.where((min_sealev_meanT>=5.) & (nmo_ge_10C>=8) & (latitude<0) & (summer_PET0>=winter_PET0) & (thermal_climate==0),5,thermal_climate)   
-        
+        thermal_climate=np.where((min_sealev_meanT>=5.) & (nmo_ge_10C>=8) & (prsum>=250)& (latitude>=0) & (summer_PET0<winter_PET0) & (thermal_climate==0),5,thermal_climate)   
+        thermal_climate=np.where((min_sealev_meanT>=5.) & (nmo_ge_10C>=8) & (prsum>=250)& (latitude<0) & (summer_PET0>=winter_PET0) & (thermal_climate==0),5,thermal_climate)   
+        # thermal_climate=np.where((min_sealev_meanT>=5.) & (nmo_ge_10C>=8) & (prsum>=250)& (latitude>=0) & (summer_PET0<winter_PET0),5,thermal_climate)   
+        # thermal_climate=np.where((min_sealev_meanT>=5.) & (nmo_ge_10C>=8) & (prsum>=250)& (latitude<0) & (summer_PET0>=winter_PET0),5,thermal_climate)         
         # Temperate   
         # Oceanic Temperate   
         thermal_climate=np.where((nmo_ge_10C>=4) & (Ta_diff<=20) & (thermal_climate==0),6,thermal_climate)   
+        # thermal_climate=np.where((nmo_ge_10C>=4) & (Ta_diff<=20),6,thermal_climate)   
         # Sub-Continental Temperate   
         thermal_climate=np.where((nmo_ge_10C>=4) & (Ta_diff<=35) & (thermal_climate==0),7,thermal_climate)   
+        # thermal_climate=np.where((nmo_ge_10C>=4) & (Ta_diff>20) & (Ta_diff<=35),7,thermal_climate)   
         # Continental Temperate   
         thermal_climate=np.where((nmo_ge_10C>=4) & (Ta_diff>35) & (thermal_climate==0),8,thermal_climate)   
+        # thermal_climate=np.where((nmo_ge_10C>=4) & (Ta_diff>35),8,thermal_climate)   
         
         # Boreal   
         # Oceanic Boreal   
         thermal_climate=np.where((nmo_ge_10C>=1) & (Ta_diff<=20) & (thermal_climate==0),9,thermal_climate)   
+        # thermal_climate=np.where((nmo_ge_10C>=1) & (nmo_ge_10C<4) & (Ta_diff<=20),9,thermal_climate)   
         # Sub-Continental Boreal   
         thermal_climate=np.where((nmo_ge_10C>=1) & (Ta_diff<=35) & (thermal_climate==0),10,thermal_climate)   
+        # thermal_climate=np.where((nmo_ge_10C>=1)&(nmo_ge_10C<4)&(Ta_diff>20)&(Ta_diff<=35),10,thermal_climate)   
         # Continental Boreal   
         thermal_climate=np.where((nmo_ge_10C>=1) & (Ta_diff>35) & (thermal_climate==0),11,thermal_climate)   
+        # thermal_climate=np.where((nmo_ge_10C>=1)&(nmo_ge_10C<4) & (Ta_diff>35),11,thermal_climate)   
         
         # Arctic   
         thermal_climate=np.where((thermal_climate==0),12,thermal_climate)   
@@ -672,14 +703,14 @@ class ClimateRegime(object):
         kc_list = np.array([0.0, 0.1, 0.2, 0.5, 1.0],dtype='float32')  
 
         if self.parallel:
-            # generalized workflow
+            # generalized workflow:
             # 1) prep inputs chunked like (all y, x chunk, all days)
             # 2) call daily loop function LGPCalc.EtaCalc on chunks, return lgp_tot in chunks (in RAM)
-            # 3) concat lgp_tot to (ny,nx)
+            # 3) concat lgp_tot to shape (ny,nx)
 
             # set up larger chunks for quicker processing
             # start=timer()
-            nlons=80  # consider adding a user override for this
+            nlons=int(np.ceil(self.chunk2D[1]*4))  # consider adding a user override for this
             bigchunk2D=(-1,nlons)
             bigchunk3D=(-1,nlons,-1)
             nchunks=int(np.ceil(self.im_width/nlons))          
@@ -975,7 +1006,6 @@ class ClimateRegime(object):
         Returns:
            2D NumPy: 57 classes of AEZ
         """        
-        
         #1st step: reclassifying the existing 12 classes of thermal climate into 6 major thermal climate.
         # Class 1: Tropics, lowland
         # Class 2: Tropics, highland
@@ -983,98 +1013,49 @@ class ClimateRegime(object):
         # Class 4: Temperate Climate
         # Class 5: Boreal Climate
         # Class 6: Arctic Climate
-    
-        aez_tclimate = np.zeros((self.im_height, self.im_width), dtype=int)
-        # obj_utilities = UtilitiesCalc.UtilitiesCalc()
+        aez_tclimate = np.zeros((self.im_height, self.im_width), dtype='int8')
+        # tropics highland
+        aez_tclimate=np.where((tclimate==1),1,aez_tclimate)
+        aez_tclimate=np.where((tclimate==2),2,aez_tclimate)
+        aez_tclimate=np.where((tclimate==3),3,aez_tclimate)
+        aez_tclimate=np.where((tclimate==4),3,aez_tclimate)
+        aez_tclimate=np.where((tclimate==5),3,aez_tclimate)
+        # grouping all the temperate classes into a single class 4    
+        aez_tclimate=np.where((tclimate==6),4,aez_tclimate)
+        aez_tclimate=np.where((tclimate==7),4,aez_tclimate)
+        aez_tclimate=np.where((tclimate==8),4,aez_tclimate)
+        # grouping all the boreal classes into a single class 5
+        aez_tclimate=np.where((tclimate==9),5,aez_tclimate)
+        aez_tclimate=np.where((tclimate==10),5,aez_tclimate)
+        aez_tclimate=np.where((tclimate==11),5,aez_tclimate)
+        # changing the arctic class into class 6
+        aez_tclimate=np.where((tclimate==12),6,aez_tclimate)
 
-        for i_r in range(self.im_height):
-            for i_c in range(self.im_width):
-                if self.set_mask:
-                    if self.im_mask[i_r, i_c] == self.nodata_val:
-                        continue
-
-                    else:
-
-                        # tropics highland
-                        if tclimate[i_r, i_c] == 1:
-                            aez_tclimate[i_r, i_c] = 1
-
-                        elif tclimate[i_r, i_c] == 2:
-                            aez_tclimate[i_r, i_c] = 2
-
-                        elif tclimate[i_r, i_c] == 3:
-                            aez_tclimate[i_r, i_c] = 3
-
-                        elif tclimate[i_r, i_c] == 4:
-                            aez_tclimate[i_r, i_c] = 3
-
-                        elif tclimate[i_r, i_c] == 5:
-                            aez_tclimate[i_r, i_c] = 3
-
-                        # grouping all the temperate classes into a single class 4
-                        elif tclimate[i_r, i_c] == 6:
-                            aez_tclimate[i_r, i_c] = 4
-
-                        elif tclimate[i_r, i_c] == 7:
-                            aez_tclimate[i_r, i_c] = 4
-
-                        elif tclimate[i_r, i_c] == 8:
-                            aez_tclimate[i_r, i_c] = 4
-
-                        # grouping all the boreal classes into a single class 5
-                        elif tclimate[i_r, i_c] == 9:
-                            aez_tclimate[i_r, i_c] = 5
-
-                        elif tclimate[i_r, i_c] == 10:
-                            aez_tclimate[i_r, i_c] = 5
-
-                        elif tclimate[i_r, i_c] == 11:
-                            aez_tclimate[i_r, i_c] = 5
-
-                        # changing the arctic class into class 6
-                        elif tclimate[i_r, i_c] == 12:
-                            aez_tclimate[i_r, i_c] = 6
 
         # 2nd Step: Classification of Thermal Zones
-        aez_tzone = np.zeros((self.im_height, self.im_width), dtype=int)
+        aez_tzone = np.zeros((self.im_height, self.im_width), dtype='int8')
+        # things we need for the conditional statements
+        nmo_ge_10=np.sum(self.meanT_monthly>=10,axis=2)
+        nmo_lt_10=np.sum(self.meanT_monthly<10,axis=2)
+        nmo_ge_5=np.sum(self.meanT_monthly>=5,axis=2)
+        temp_acc_10deg = np.where(self.meanT_daily<10,0,self.meanT_daily).sum(axis=2)
+        nday_gt_20=np.sum(self.meanT_daily>20,axis=2)
+        if self.parallel:
+            temp_acc_10deg=temp_acc_10deg.compute()
+            nday_gt_20=nday_gt_20.compute()
+        # Warm Tzone (TZ1)
+        aez_tzone=np.where((nmo_ge_10==12)&(self.annual_Tmean>=20),1,aez_tzone)
+        # Moderately cool Tzone (TZ2)
+        aez_tzone=np.where((nmo_ge_5==12)&(nmo_ge_10>=8)&(aez_tzone==0),2,aez_tzone)
+        # TZ3 Moderate
+        aez_tzone=np.where((aez_tclimate==4)&(nmo_ge_10>=5)&(nday_gt_20>=75)&(temp_acc_10deg>3000)&(aez_tzone==0),3,aez_tzone)
+        # TZ4 Cool
+        aez_tzone=np.where((nmo_ge_10>=4)&(self.annual_Tmean>=0)&(aez_tzone==0),4,aez_tzone)
+        # TZ5 Cold
+        aez_tzone=np.where((nmo_ge_10>=1)&(nmo_ge_10<=3)&(self.annual_Tmean>=0)&(aez_tzone==0),5,aez_tzone)
+        # TZ6 Very cold
+        aez_tzone=np.where((nmo_lt_10==12)|(self.annual_Tmean<0)&(aez_tzone==0),6,aez_tzone)
 
-
-        for i_r in range(self.im_height):
-            for i_c in range(self.im_width):
-                if self.set_mask:
-                    if self.im_mask[i_r, i_c] == self.nodata_val:
-                        continue
-                    else:
-                        mean_temp = np.copy(self.meanT_daily[i_r, i_c, :])
-                        # meanT_monthly = obj_utilities.averageDailyToMonthly(mean_temp)
-                        meanT_monthly=self.meanT_monthly
-                        # one conditional parameter for temperature accumulation
-                        temp_acc_10deg = np.copy(self.meanT_daily[i_r, i_c, :])
-                        temp_acc_10deg[temp_acc_10deg < 10] = 0
-
-                        # Warm Tzone (TZ1)
-                        if np.sum(meanT_monthly >= 10) == 12 and np.mean(mean_temp) >= 20:
-                            aez_tzone[i_r, i_c] = 1
-
-                        # Moderately cool Tzone (TZ2)
-                        elif np.sum(meanT_monthly >= 5) == 12 and np.sum(meanT_monthly >= 10) >= 8:
-                            aez_tzone[i_r, i_c] = 2
-
-                        # TZ3 Moderate
-                        elif aez_tclimate[i_r, i_c] == 4 and np.sum(meanT_monthly >= 10) >= 5 and np.sum(mean_temp > 20) >= 75 and np.sum(temp_acc_10deg) > 3000:
-                            aez_tzone[i_r, i_c] = 3
-
-                        # TZ4 Cool
-                        elif np.sum(meanT_monthly >= 10) >= 4 and np.mean(mean_temp) >= 0:
-                            aez_tzone[i_r, i_c] = 4
-
-                        # TZ5 Cold
-                        elif np.sum(meanT_monthly >= 10) in range(1, 4) and np.mean(mean_temp) >= 0:
-                            aez_tzone[i_r, i_c] = 5
-
-                        # TZ6 Very cold
-                        elif np.sum(meanT_monthly < 10) == 12 or np.mean(mean_temp) < 0:
-                            aez_tzone[i_r, i_c] = 6
 
         # 3rd Step: Creation of Temperature Regime Classes
         # Temperature Regime Class Definition
@@ -1088,49 +1069,18 @@ class ClimateRegime(object):
         # 8 = Boreal, cold, no continuous or discontinuous occurrence of permafrost (TRC8)
         # 9 = Boreal, cold, with continuous or discontinuous occurrence of permafrost (TRC9)
         # 10 = Arctic, very cold (TRC10)
+        aez_temp_regime = np.zeros((self.im_height, self.im_width), dtype='int8')
+        aez_temp_regime = np.where((aez_tclimate==1)&(aez_tzone==1),1,aez_temp_regime) # Tropics, lowland
+        aez_temp_regime = np.where((aez_tclimate==2)&((aez_tzone==2)|(aez_tzone==4))&(aez_temp_regime==0),2,aez_temp_regime) # Tropics, highland
+        aez_temp_regime = np.where((aez_tclimate==3)&(aez_tzone==1)&(aez_temp_regime==0),3,aez_temp_regime) # Subtropics, warm
+        aez_temp_regime = np.where((aez_tclimate==3)&(aez_tzone==2)&(aez_temp_regime==0),4,aez_temp_regime) # Subtropics,moderate cool
+        aez_temp_regime = np.where((aez_tclimate==3)&(aez_tzone==4)&(aez_temp_regime==0),5,aez_temp_regime) # Subtropics,cool
+        aez_temp_regime = np.where((aez_tclimate==4)&(aez_tzone==3)&(aez_temp_regime==0),6,aez_temp_regime) # Temperate, moderate
+        aez_temp_regime = np.where((aez_tclimate==4)&(aez_tzone==4)&(aez_temp_regime==0),7,aez_temp_regime) # Temperate, cool
+        aez_temp_regime = np.where((aez_tclimate>=2)&(aez_tclimate<=6)&(aez_tzone==5)&(permafrost>=3)&(aez_temp_regime==0),8,aez_temp_regime) # Boreal/Cold, no permafrost
+        aez_temp_regime = np.where((aez_tclimate>=2)&(aez_tclimate<=6)&(aez_tzone==5)&(permafrost<=2)&(aez_temp_regime==0),9,aez_temp_regime) # Boreal/Cold, with permafrost
+        aez_temp_regime = np.where((aez_tclimate>=2)&(aez_tclimate<=7)&(aez_tzone==6)&(aez_temp_regime==0),10,aez_temp_regime) # Arctic/Very Cold
 
-        aez_temp_regime = np.zeros((self.im_height, self.im_width), dtype=int)
-
-        for i_r in range(self.im_height):
-            for i_c in range(self.im_width):
-                if self.set_mask:
-                    if self.im_mask[i_r, i_c] == self.nodata_val:
-                        continue
-                    else:
-
-                        if aez_tclimate[i_r, i_c] == 1 and aez_tzone[i_r, i_c] == 1:
-                            aez_temp_regime[i_r, i_c] = 1  # Tropics, lowland
-
-                        elif aez_tclimate[i_r, i_c] == 2 and aez_tzone[i_r, i_c] in [2, 4]:
-                            aez_temp_regime[i_r, i_c] = 2  # Tropics, highland
-
-                        elif aez_tclimate[i_r, i_c] == 3 and aez_tzone[i_r, i_c] == 1:
-                            aez_temp_regime[i_r, i_c] = 3  # Subtropics, warm
-
-                        elif aez_tclimate[i_r, i_c] == 3 and aez_tzone[i_r, i_c] == 2:
-                            # Subtropics,moderate cool
-                            aez_temp_regime[i_r, i_c] = 4
-
-                        elif aez_tclimate[i_r, i_c] == 3 and aez_tzone[i_r, i_c] == 4:
-                            aez_temp_regime[i_r, i_c] = 5  # Subtropics,cool
-
-                        elif aez_tclimate[i_r, i_c] == 4 and aez_tzone[i_r, i_c] == 3:
-                            # Temperate, moderate
-                            aez_temp_regime[i_r, i_c] = 6
-
-                        elif aez_tclimate[i_r, i_c] == 4 and aez_tzone[i_r, i_c] == 4:
-                            aez_temp_regime[i_r, i_c] = 7  # Temperate, cool
-
-                        elif aez_tclimate[i_r, i_c] in range(2, 6) and aez_tzone[i_r, i_c] == 5:
-                            if np.logical_or(permafrost[i_r, i_c] == 1, permafrost[i_r, i_c] == 2) == False:
-                                # Boreal/Cold, no
-                                aez_temp_regime[i_r, i_c] = 8
-                            else:
-                                # Boreal/Cold, with permafrost
-                                aez_temp_regime[i_r, i_c] = 9
-
-                        elif aez_tclimate[i_r, i_c] in range(2, 7) and aez_tzone[i_r, i_c] == 6:
-                            aez_temp_regime[i_r, i_c] = 10  # Arctic/Very Cold
 
         # 4th Step: Moisture Regime classes
         # Moisture Regime Class Definition
@@ -1138,252 +1088,506 @@ class ClimateRegime(object):
         # 2 = M2 (semi-arid/dry areas, 60 <= LGP* < 180)
         # 3 = M3 (sub-humid/moist areas, 180 <= LGP* < 270)
         # 4 = M4 (humid/wet areas, LGP* >= 270)
+        aez_moisture_regime = np.zeros((self.im_height, self.im_width), dtype='int8')
+        # check if LGP t>5 is greater or less than 330 days. If greater, LGP will be used; otherwise, LGP_equv will be used.
+        aez_moisture_regime=np.where((lgpt_5>330)&(lgp>=270),4,aez_moisture_regime) # Class 4 (M4)
+        aez_moisture_regime=np.where((lgpt_5>330)&(lgp>=180)&(lgp<270)&(aez_moisture_regime==0),3,aez_moisture_regime) # Class 3 (M3)
+        aez_moisture_regime=np.where((lgpt_5>330)&(lgp>=60)&(lgp<180)&(aez_moisture_regime==0),2,aez_moisture_regime) # Class 2 (M2)
+        aez_moisture_regime=np.where((lgpt_5>330)&(lgp>=0)&(lgp<60)&(aez_moisture_regime==0),1,aez_moisture_regime) # Class 1 (M1)
+        aez_moisture_regime=np.where((lgpt_5<=330)&(lgp_equv>=270)&(aez_moisture_regime==0),4,aez_moisture_regime) # Class 4 (M4)
+        aez_moisture_regime=np.where((lgpt_5<=330)&(lgp_equv>=180)&(lgp<270)&(aez_moisture_regime==0),3,aez_moisture_regime) # Class 3 (M3)
+        aez_moisture_regime=np.where((lgpt_5<=330)&(lgp_equv>=60)&(lgp<180)&(aez_moisture_regime==0),2,aez_moisture_regime) # Class 2 (M2)
+        aez_moisture_regime=np.where((lgpt_5<=330)&(lgp_equv>=0)&(lgp<60)&(aez_moisture_regime==0),1,aez_moisture_regime) # Class 1 (M1)
 
-        aez_moisture_regime = np.zeros(
-            (self.im_height, self.im_width), dtype=int)
-
-        for i_r in range(self.im_height):
-            for i_c in range(self.im_width):
-                if self.set_mask:
-                    if self.im_mask[i_r, i_c] == self.nodata_val:
-                        continue
-                    else:
-
-                        # check if LGP t>5 is greater or less than 330 days. If greater, LGP will be used; otherwise, LGP_equv will be used.
-                        if lgpt_5[i_r, i_c] > 330:
-
-                            # Class 4 (M4)
-                            if lgp[i_r, i_c] >= 270:
-                                aez_moisture_regime[i_r, i_c] = 4
-
-                            # Class 3 (M3)
-                            elif lgp[i_r, i_c] >= 180 and lgp[i_r, i_c] < 270:
-                                aez_moisture_regime[i_r, i_c] = 3
-
-                            # Class 2 (M2)
-                            elif lgp[i_r, i_c] >= 60 and lgp[i_r, i_c] < 180:
-                                aez_moisture_regime[i_r, i_c] = 2
-
-                            # Class 1 (M1)
-                            elif lgp[i_r, i_c] >= 0 and lgp[i_r, i_c] < 60:
-                                aez_moisture_regime[i_r, i_c] = 1
-
-                        elif lgpt_5[i_r, i_c] <= 330:
-
-                            # Class 4 (M4)
-                            if lgp_equv[i_r, i_c] >= 270:
-                                aez_moisture_regime[i_r, i_c] = 4
-
-                            # Class 3 (M3)
-                            elif lgp_equv[i_r, i_c] >= 180 and lgp_equv[i_r, i_c] < 270:
-                                aez_moisture_regime[i_r, i_c] = 3
-
-                            # Class 2 (M2)
-                            elif lgp_equv[i_r, i_c] >= 60 and lgp_equv[i_r, i_c] < 180:
-                                aez_moisture_regime[i_r, i_c] = 2
-
-                            # Class 1 (M1)
-                            elif lgp_equv[i_r, i_c] >= 0 and lgp_equv[i_r, i_c] < 60:
-                                aez_moisture_regime[i_r, i_c] = 1
 
         # Now, we will classify the agro-ecological zonation
         # By GAEZ v4 Documentation, there are prioritized sequential assignment of AEZ classes in order to ensure the consistency of classification
-        aez = np.zeros((self.im_height, self.im_width), dtype=int)
-
-        for i_r in range(self.im_height):
-            for i_c in range(self.im_width):
-                if self.set_mask:
-                    if self.im_mask[i_r, i_c] == self.nodata_val:
-                        continue
-                    else:
-                        # if it's urban built-up lulc, Dominantly urban/built-up land
-                        if soil_terrain_lulc[i_r, i_c] == 8:
-                            aez[i_r, i_c] = 56
-
-                        # if it's water/ dominantly water
-                        elif soil_terrain_lulc[i_r, i_c] == 7:
-                            aez[i_r, i_c] = 57
-
-                        # if it's dominantly very steep terrain/Dominantly very steep terrain
-                        elif soil_terrain_lulc[i_r, i_c] == 1:
-                            aez[i_r, i_c] = 49
-
-                        # if it's irrigated soils/ Land with ample irrigated soils
-                        elif soil_terrain_lulc[i_r, i_c] == 6:
-                            aez[i_r, i_c] = 51
-
-                        # if it's hydromorphic soils/ Dominantly hydromorphic soils
-                        elif soil_terrain_lulc[i_r, i_c] == 2:
-                            aez[i_r, i_c] = 52
-
-                        # Desert/Arid climate
-                        elif aez_moisture_regime[i_r, i_c] == 1:
-                            aez[i_r, i_c] = 53
-
-                        # BO/Cold climate, with Permafrost
-                        elif aez_temp_regime[i_r, i_c] == 9 and aez_moisture_regime[i_r, i_c] in [1, 2, 3, 4] == True:
-                            aez[i_r, i_c] = 54
-
-                        # Arctic/ Very cold climate
-                        elif aez_temp_regime[i_r, i_c] == 10 and aez_moisture_regime[i_r, i_c] in [1, 2, 3, 4] == True:
-                            aez[i_r, i_c] = 55
-
-                        # Severe soil/terrain limitations
-                        elif soil_terrain_lulc[i_r, i_c] == 5:
-                            aez[i_r, i_c] = 50
-
-                        #######
-                        elif aez_temp_regime[i_r, i_c] == 1 and aez_moisture_regime[i_r, i_c] == 2 and soil_terrain_lulc[i_r, i_c] == 3:
-                            aez[i_r, i_c] = 1
-
-                        elif aez_temp_regime[i_r, i_c] == 1 and aez_moisture_regime[i_r, i_c] == 2 and soil_terrain_lulc[i_r, i_c] == 4:
-                            aez[i_r, i_c] = 2
-
-                        elif aez_temp_regime[i_r, i_c] == 1 and aez_moisture_regime[i_r, i_c] == 3 and soil_terrain_lulc[i_r, i_c] == 3:
-                            aez[i_r, i_c] = 3
-
-                        elif aez_temp_regime[i_r, i_c] == 1 and aez_moisture_regime[i_r, i_c] == 3 and soil_terrain_lulc[i_r, i_c] == 4:
-                            aez[i_r, i_c] = 4
-
-                        elif aez_temp_regime[i_r, i_c] == 1 and aez_moisture_regime[i_r, i_c] == 4 and soil_terrain_lulc[i_r, i_c] == 3:
-                            aez[i_r, i_c] = 5
-
-                        elif aez_temp_regime[i_r, i_c] == 1 and aez_moisture_regime[i_r, i_c] == 4 and soil_terrain_lulc[i_r, i_c] == 4:
-                            aez[i_r, i_c] = 6
-                        ####
-                        elif aez_temp_regime[i_r, i_c] == 2 and aez_moisture_regime[i_r, i_c] == 2 and soil_terrain_lulc[i_r, i_c] == 3:
-                            aez[i_r, i_c] = 7
-
-                        elif aez_temp_regime[i_r, i_c] == 2 and aez_moisture_regime[i_r, i_c] == 2 and soil_terrain_lulc[i_r, i_c] == 4:
-                            aez[i_r, i_c] = 8
-
-                        elif aez_temp_regime[i_r, i_c] == 2 and aez_moisture_regime[i_r, i_c] == 3 and soil_terrain_lulc[i_r, i_c] == 3:
-                            aez[i_r, i_c] = 9
-
-                        elif aez_temp_regime[i_r, i_c] == 2 and aez_moisture_regime[i_r, i_c] == 3 and soil_terrain_lulc[i_r, i_c] == 4:
-                            aez[i_r, i_c] = 10
-
-                        elif aez_temp_regime[i_r, i_c] == 2 and aez_moisture_regime[i_r, i_c] == 4 and soil_terrain_lulc[i_r, i_c] == 3:
-                            aez[i_r, i_c] = 11
-
-                        elif aez_temp_regime[i_r, i_c] == 2 and aez_moisture_regime[i_r, i_c] == 4 and soil_terrain_lulc[i_r, i_c] == 4:
-                            aez[i_r, i_c] = 12
-                        ###
-                        elif aez_temp_regime[i_r, i_c] == 3 and aez_moisture_regime[i_r, i_c] == 2 and soil_terrain_lulc[i_r, i_c] == 3:
-                            aez[i_r, i_c] = 13
-
-                        elif aez_temp_regime[i_r, i_c] == 3 and aez_moisture_regime[i_r, i_c] == 2 and soil_terrain_lulc[i_r, i_c] == 4:
-                            aez[i_r, i_c] = 14
-
-                        elif aez_temp_regime[i_r, i_c] == 3 and aez_moisture_regime[i_r, i_c] == 3 and soil_terrain_lulc[i_r, i_c] == 3:
-                            aez[i_r, i_c] = 15
-
-                        elif aez_temp_regime[i_r, i_c] == 3 and aez_moisture_regime[i_r, i_c] == 3 and soil_terrain_lulc[i_r, i_c] == 4:
-                            aez[i_r, i_c] = 16
-
-                        elif aez_temp_regime[i_r, i_c] == 3 and aez_moisture_regime[i_r, i_c] == 4 and soil_terrain_lulc[i_r, i_c] == 3:
-                            aez[i_r, i_c] = 17
-
-                        elif aez_temp_regime[i_r, i_c] == 3 and aez_moisture_regime[i_r, i_c] == 4 and soil_terrain_lulc[i_r, i_c] == 4:
-                            aez[i_r, i_c] = 18
-                        #####
-                        elif aez_temp_regime[i_r, i_c] == 4 and aez_moisture_regime[i_r, i_c] == 2 and soil_terrain_lulc[i_r, i_c] == 3:
-                            aez[i_r, i_c] = 19
-
-                        elif aez_temp_regime[i_r, i_c] == 4 and aez_moisture_regime[i_r, i_c] == 2 and soil_terrain_lulc[i_r, i_c] == 4:
-                            aez[i_r, i_c] = 20
-
-                        elif aez_temp_regime[i_r, i_c] == 4 and aez_moisture_regime[i_r, i_c] == 3 and soil_terrain_lulc[i_r, i_c] == 3:
-                            aez[i_r, i_c] = 21
-
-                        elif aez_temp_regime[i_r, i_c] == 4 and aez_moisture_regime[i_r, i_c] == 3 and soil_terrain_lulc[i_r, i_c] == 4:
-                            aez[i_r, i_c] = 22
-
-                        elif aez_temp_regime[i_r, i_c] == 4 and aez_moisture_regime[i_r, i_c] == 4 and soil_terrain_lulc[i_r, i_c] == 3:
-                            aez[i_r, i_c] = 23
-
-                        elif aez_temp_regime[i_r, i_c] == 4 and aez_moisture_regime[i_r, i_c] == 4 and soil_terrain_lulc[i_r, i_c] == 4:
-                            aez[i_r, i_c] = 24
-                        #####
-                        elif aez_temp_regime[i_r, i_c] == 5 and aez_moisture_regime[i_r, i_c] == 2 and soil_terrain_lulc[i_r, i_c] == 3:
-                            aez[i_r, i_c] = 25
-
-                        elif aez_temp_regime[i_r, i_c] == 5 and aez_moisture_regime[i_r, i_c] == 2 and soil_terrain_lulc[i_r, i_c] == 4:
-                            aez[i_r, i_c] = 26
-
-                        elif aez_temp_regime[i_r, i_c] == 5 and aez_moisture_regime[i_r, i_c] == 3 and soil_terrain_lulc[i_r, i_c] == 3:
-                            aez[i_r, i_c] = 27
-
-                        elif aez_temp_regime[i_r, i_c] == 5 and aez_moisture_regime[i_r, i_c] == 3 and soil_terrain_lulc[i_r, i_c] == 4:
-                            aez[i_r, i_c] = 28
-
-                        elif aez_temp_regime[i_r, i_c] == 5 and aez_moisture_regime[i_r, i_c] == 4 and soil_terrain_lulc[i_r, i_c] == 3:
-                            aez[i_r, i_c] = 29
-
-                        elif aez_temp_regime[i_r, i_c] == 5 and aez_moisture_regime[i_r, i_c] == 4 and soil_terrain_lulc[i_r, i_c] == 4:
-                            aez[i_r, i_c] = 30
-                        ######
-
-                        elif aez_temp_regime[i_r, i_c] == 6 and aez_moisture_regime[i_r, i_c] == 2 and soil_terrain_lulc[i_r, i_c] == 3:
-                            aez[i_r, i_c] = 31
-
-                        elif aez_temp_regime[i_r, i_c] == 6 and aez_moisture_regime[i_r, i_c] == 2 and soil_terrain_lulc[i_r, i_c] == 4:
-                            aez[i_r, i_c] = 32
-
-                        elif aez_temp_regime[i_r, i_c] == 6 and aez_moisture_regime[i_r, i_c] == 3 and soil_terrain_lulc[i_r, i_c] == 3:
-                            aez[i_r, i_c] = 33
-
-                        elif aez_temp_regime[i_r, i_c] == 6 and aez_moisture_regime[i_r, i_c] == 3 and soil_terrain_lulc[i_r, i_c] == 4:
-                            aez[i_r, i_c] = 34
-
-                        elif aez_temp_regime[i_r, i_c] == 6 and aez_moisture_regime[i_r, i_c] == 4 and soil_terrain_lulc[i_r, i_c] == 3:
-                            aez[i_r, i_c] = 35
-
-                        elif aez_temp_regime[i_r, i_c] == 6 and aez_moisture_regime[i_r, i_c] == 4 and soil_terrain_lulc[i_r, i_c] == 4:
-                            aez[i_r, i_c] = 36
-
-                        ###
-                        elif aez_temp_regime[i_r, i_c] == 7 and aez_moisture_regime[i_r, i_c] == 2 and soil_terrain_lulc[i_r, i_c] == 3:
-                            aez[i_r, i_c] = 37
-
-                        elif aez_temp_regime[i_r, i_c] == 7 and aez_moisture_regime[i_r, i_c] == 2 and soil_terrain_lulc[i_r, i_c] == 4:
-                            aez[i_r, i_c] = 38
-
-                        elif aez_temp_regime[i_r, i_c] == 7 and aez_moisture_regime[i_r, i_c] == 3 and soil_terrain_lulc[i_r, i_c] == 3:
-                            aez[i_r, i_c] = 39
-
-                        elif aez_temp_regime[i_r, i_c] == 7 and aez_moisture_regime[i_r, i_c] == 3 and soil_terrain_lulc[i_r, i_c] == 4:
-                            aez[i_r, i_c] = 40
-
-                        elif aez_temp_regime[i_r, i_c] == 7 and aez_moisture_regime[i_r, i_c] == 4 and soil_terrain_lulc[i_r, i_c] == 3:
-                            aez[i_r, i_c] = 41
-
-                        elif aez_temp_regime[i_r, i_c] == 7 and aez_moisture_regime[i_r, i_c] == 4 and soil_terrain_lulc[i_r, i_c] == 4:
-                            aez[i_r, i_c] = 42
-                        #####
-
-                        elif aez_temp_regime[i_r, i_c] == 8 and aez_moisture_regime[i_r, i_c] == 2 and soil_terrain_lulc[i_r, i_c] == 3:
-                            aez[i_r, i_c] = 43
-
-                        elif aez_temp_regime[i_r, i_c] == 8 and aez_moisture_regime[i_r, i_c] == 2 and soil_terrain_lulc[i_r, i_c] == 4:
-                            aez[i_r, i_c] = 44
-
-                        elif aez_temp_regime[i_r, i_c] == 8 and aez_moisture_regime[i_r, i_c] == 3 and soil_terrain_lulc[i_r, i_c] == 3:
-                            aez[i_r, i_c] = 45
-
-                        elif aez_temp_regime[i_r, i_c] == 8 and aez_moisture_regime[i_r, i_c] == 3 and soil_terrain_lulc[i_r, i_c] == 4:
-                            aez[i_r, i_c] = 46
-
-                        elif aez_temp_regime[i_r, i_c] == 8 and aez_moisture_regime[i_r, i_c] == 4 and soil_terrain_lulc[i_r, i_c] == 3:
-                            aez[i_r, i_c] = 47
-
-                        elif aez_temp_regime[i_r, i_c] == 8 and aez_moisture_regime[i_r, i_c] == 4 and soil_terrain_lulc[i_r, i_c] == 4:
-                            aez[i_r, i_c] = 48          
+        if self.parallel:
+            soil_terrain_lulc=soil_terrain_lulc.compute()
+        aez = np.zeros((self.im_height, self.im_width), dtype='int8')
+        aez=np.where((soil_terrain_lulc==8)&(aez==0),56,aez) # if it's urban built-up lulc, Dominantly urban/built-up land
+        aez=np.where((soil_terrain_lulc==7)&(aez==0),57,aez) # if it's water/ dominantly water
+        aez=np.where((soil_terrain_lulc==1)&(aez==0),49,aez) # if it's dominantly very steep terrain/Dominantly very steep terrain 
+        aez=np.where((soil_terrain_lulc==6)&(aez==0),51,aez) # if it's irrigated soils/ Land with ample irrigated soils
+        aez=np.where((soil_terrain_lulc==2)&(aez==0),52,aez) # if it's hydromorphic soils/ Dominantly hydromorphic soils
+        aez=np.where((aez_moisture_regime==1)&(aez==0),53,aez) # Desert/Arid climate
+        aez=np.where((aez_temp_regime==9)&(aez_moisture_regime>=1)&(aez_moisture_regime<=4)&(aez==0),54,aez) # BO/Cold climate, with Permafrost
+        aez=np.where((aez_temp_regime==10)&(aez_moisture_regime>=1)&(aez_moisture_regime<=4)&(aez==0),55,aez) # Arctic/ Very cold climate
+        aez=np.where((soil_terrain_lulc==5)&(aez==0),50,aez) # Severe soil/terrain limitations
+        #######
+        aez=np.where((aez_temp_regime==1)&(aez_moisture_regime==2)&(soil_terrain_lulc==3)&(aez==0),1,aez) 
+        aez=np.where((aez_temp_regime==1)&(aez_moisture_regime==2)&(soil_terrain_lulc==4)&(aez==0),2,aez) 
+        aez=np.where((aez_temp_regime==1)&(aez_moisture_regime==3)&(soil_terrain_lulc==3)&(aez==0),3,aez) 
+        aez=np.where((aez_temp_regime==1)&(aez_moisture_regime==3)&(soil_terrain_lulc==4)&(aez==0),4,aez) 
+        aez=np.where((aez_temp_regime==1)&(aez_moisture_regime==4)&(soil_terrain_lulc==3)&(aez==0),5,aez) 
+        aez=np.where((aez_temp_regime==1)&(aez_moisture_regime==4)&(soil_terrain_lulc==4)&(aez==0),6,aez) 
+        #######
+        aez=np.where((aez_temp_regime==2)&(aez_moisture_regime==2)&(soil_terrain_lulc==3)&(aez==0),7,aez) 
+        aez=np.where((aez_temp_regime==2)&(aez_moisture_regime==2)&(soil_terrain_lulc==4)&(aez==0),8,aez) 
+        aez=np.where((aez_temp_regime==2)&(aez_moisture_regime==3)&(soil_terrain_lulc==3)&(aez==0),9,aez) 
+        aez=np.where((aez_temp_regime==2)&(aez_moisture_regime==3)&(soil_terrain_lulc==4)&(aez==0),10,aez) 
+        aez=np.where((aez_temp_regime==2)&(aez_moisture_regime==4)&(soil_terrain_lulc==3)&(aez==0),11,aez) 
+        aez=np.where((aez_temp_regime==2)&(aez_moisture_regime==4)&(soil_terrain_lulc==4)&(aez==0),12,aez) 
+        #######
+        aez=np.where((aez_temp_regime==3)&(aez_moisture_regime==2)&(soil_terrain_lulc==3)&(aez==0),13,aez) 
+        aez=np.where((aez_temp_regime==3)&(aez_moisture_regime==2)&(soil_terrain_lulc==4)&(aez==0),14,aez) 
+        aez=np.where((aez_temp_regime==3)&(aez_moisture_regime==3)&(soil_terrain_lulc==3)&(aez==0),15,aez) 
+        aez=np.where((aez_temp_regime==3)&(aez_moisture_regime==3)&(soil_terrain_lulc==4)&(aez==0),16,aez) 
+        aez=np.where((aez_temp_regime==3)&(aez_moisture_regime==4)&(soil_terrain_lulc==3)&(aez==0),17,aez) 
+        aez=np.where((aez_temp_regime==3)&(aez_moisture_regime==4)&(soil_terrain_lulc==4)&(aez==0),18,aez)    
+        #######
+        aez=np.where((aez_temp_regime==4)&(aez_moisture_regime==2)&(soil_terrain_lulc==3)&(aez==0),19,aez) 
+        aez=np.where((aez_temp_regime==4)&(aez_moisture_regime==2)&(soil_terrain_lulc==4)&(aez==0),20,aez) 
+        aez=np.where((aez_temp_regime==4)&(aez_moisture_regime==3)&(soil_terrain_lulc==3)&(aez==0),21,aez) 
+        aez=np.where((aez_temp_regime==4)&(aez_moisture_regime==3)&(soil_terrain_lulc==4)&(aez==0),22,aez) 
+        aez=np.where((aez_temp_regime==4)&(aez_moisture_regime==4)&(soil_terrain_lulc==3)&(aez==0),23,aez) 
+        aez=np.where((aez_temp_regime==4)&(aez_moisture_regime==4)&(soil_terrain_lulc==4)&(aez==0),24,aez)    
+        #######
+        aez=np.where((aez_temp_regime==5)&(aez_moisture_regime==2)&(soil_terrain_lulc==3)&(aez==0),25,aez) 
+        aez=np.where((aez_temp_regime==5)&(aez_moisture_regime==2)&(soil_terrain_lulc==4)&(aez==0),26,aez) 
+        aez=np.where((aez_temp_regime==5)&(aez_moisture_regime==3)&(soil_terrain_lulc==3)&(aez==0),27,aez) 
+        aez=np.where((aez_temp_regime==5)&(aez_moisture_regime==3)&(soil_terrain_lulc==4)&(aez==0),28,aez) 
+        aez=np.where((aez_temp_regime==5)&(aez_moisture_regime==4)&(soil_terrain_lulc==3)&(aez==0),29,aez) 
+        aez=np.where((aez_temp_regime==5)&(aez_moisture_regime==4)&(soil_terrain_lulc==4)&(aez==0),30,aez)    
+        #######
+        aez=np.where((aez_temp_regime==6)&(aez_moisture_regime==2)&(soil_terrain_lulc==3)&(aez==0),31,aez) 
+        aez=np.where((aez_temp_regime==6)&(aez_moisture_regime==2)&(soil_terrain_lulc==4)&(aez==0),32,aez) 
+        aez=np.where((aez_temp_regime==6)&(aez_moisture_regime==3)&(soil_terrain_lulc==3)&(aez==0),33,aez) 
+        aez=np.where((aez_temp_regime==6)&(aez_moisture_regime==3)&(soil_terrain_lulc==4)&(aez==0),34,aez) 
+        aez=np.where((aez_temp_regime==6)&(aez_moisture_regime==4)&(soil_terrain_lulc==3)&(aez==0),35,aez) 
+        aez=np.where((aez_temp_regime==6)&(aez_moisture_regime==4)&(soil_terrain_lulc==4)&(aez==0),36,aez)    
+        #######  
+        aez=np.where((aez_temp_regime==7)&(aez_moisture_regime==2)&(soil_terrain_lulc==3)&(aez==0),37,aez) 
+        aez=np.where((aez_temp_regime==7)&(aez_moisture_regime==2)&(soil_terrain_lulc==4)&(aez==0),38,aez) 
+        aez=np.where((aez_temp_regime==7)&(aez_moisture_regime==3)&(soil_terrain_lulc==3)&(aez==0),39,aez) 
+        aez=np.where((aez_temp_regime==7)&(aez_moisture_regime==3)&(soil_terrain_lulc==4)&(aez==0),40,aez) 
+        aez=np.where((aez_temp_regime==7)&(aez_moisture_regime==4)&(soil_terrain_lulc==3)&(aez==0),41,aez) 
+        aez=np.where((aez_temp_regime==7)&(aez_moisture_regime==4)&(soil_terrain_lulc==4)&(aez==0),42,aez)    
+        #######  
+        aez=np.where((aez_temp_regime==8)&(aez_moisture_regime==2)&(soil_terrain_lulc==3)&(aez==0),43,aez) 
+        aez=np.where((aez_temp_regime==8)&(aez_moisture_regime==2)&(soil_terrain_lulc==4)&(aez==0),44,aez) 
+        aez=np.where((aez_temp_regime==8)&(aez_moisture_regime==3)&(soil_terrain_lulc==3)&(aez==0),45,aez) 
+        aez=np.where((aez_temp_regime==8)&(aez_moisture_regime==3)&(soil_terrain_lulc==4)&(aez==0),46,aez) 
+        aez=np.where((aez_temp_regime==8)&(aez_moisture_regime==4)&(soil_terrain_lulc==3)&(aez==0),47,aez) 
+        aez=np.where((aez_temp_regime==8)&(aez_moisture_regime==4)&(soil_terrain_lulc==4)&(aez==0),48,aez)    
+        #######   
 
         if self.set_mask:
-            return np.where(self.im_mask, aez, np.nan)
-        else:        
-            return aez
+            if self.parallel:
+                mask=self.im_mask.compute()
+            else:
+                mask=self.im_mask
+            return np.where(mask, aez.astype('float32'), np.float32(np.nan))
+        else:
+            return aez                
+        # #1st step: reclassifying the existing 12 classes of thermal climate into 6 major thermal climate.
+        # # Class 1: Tropics, lowland
+        # # Class 2: Tropics, highland
+        # # Class 3: Subtropics
+        # # Class 4: Temperate Climate
+        # # Class 5: Boreal Climate
+        # # Class 6: Arctic Climate
+    
+        # aez_tclimate = np.zeros((self.im_height, self.im_width), dtype=int)
+        # # obj_utilities = UtilitiesCalc.UtilitiesCalc()
+
+        # for i_r in range(self.im_height):
+        #     for i_c in range(self.im_width):
+        #         if self.set_mask:
+        #             if self.im_mask[i_r, i_c] == self.nodata_val:
+        #                 continue
+
+        #             else:
+
+        #                 # tropics highland
+        #                 if tclimate[i_r, i_c] == 1:
+        #                     aez_tclimate[i_r, i_c] = 1
+
+        #                 elif tclimate[i_r, i_c] == 2:
+        #                     aez_tclimate[i_r, i_c] = 2
+
+        #                 elif tclimate[i_r, i_c] == 3:
+        #                     aez_tclimate[i_r, i_c] = 3
+
+        #                 elif tclimate[i_r, i_c] == 4:
+        #                     aez_tclimate[i_r, i_c] = 3
+
+        #                 elif tclimate[i_r, i_c] == 5:
+        #                     aez_tclimate[i_r, i_c] = 3
+
+        #                 # grouping all the temperate classes into a single class 4
+        #                 elif tclimate[i_r, i_c] == 6:
+        #                     aez_tclimate[i_r, i_c] = 4
+
+        #                 elif tclimate[i_r, i_c] == 7:
+        #                     aez_tclimate[i_r, i_c] = 4
+
+        #                 elif tclimate[i_r, i_c] == 8:
+        #                     aez_tclimate[i_r, i_c] = 4
+
+        #                 # grouping all the boreal classes into a single class 5
+        #                 elif tclimate[i_r, i_c] == 9:
+        #                     aez_tclimate[i_r, i_c] = 5
+
+        #                 elif tclimate[i_r, i_c] == 10:
+        #                     aez_tclimate[i_r, i_c] = 5
+
+        #                 elif tclimate[i_r, i_c] == 11:
+        #                     aez_tclimate[i_r, i_c] = 5
+
+        #                 # changing the arctic class into class 6
+        #                 elif tclimate[i_r, i_c] == 12:
+        #                     aez_tclimate[i_r, i_c] = 6
+
+        # # 2nd Step: Classification of Thermal Zones
+        # aez_tzone = np.zeros((self.im_height, self.im_width), dtype=int)
+
+
+        # for i_r in range(self.im_height):
+        #     for i_c in range(self.im_width):
+        #         if self.set_mask:
+        #             if self.im_mask[i_r, i_c] == self.nodata_val:
+        #                 continue
+        #             else:
+        #                 mean_temp = np.copy(self.meanT_daily[i_r, i_c, :])
+        #                 # meanT_monthly = obj_utilities.averageDailyToMonthly(mean_temp)
+        #                 meanT_monthly=self.meanT_monthly
+        #                 # one conditional parameter for temperature accumulation
+        #                 temp_acc_10deg = np.copy(self.meanT_daily[i_r, i_c, :])
+        #                 temp_acc_10deg[temp_acc_10deg < 10] = 0
+
+        #                 # Warm Tzone (TZ1)
+        #                 if np.sum(meanT_monthly >= 10) == 12 and np.mean(mean_temp) >= 20:
+        #                     aez_tzone[i_r, i_c] = 1
+
+        #                 # Moderately cool Tzone (TZ2)
+        #                 elif np.sum(meanT_monthly >= 5) == 12 and np.sum(meanT_monthly >= 10) >= 8:
+        #                     aez_tzone[i_r, i_c] = 2
+
+        #                 # TZ3 Moderate
+        #                 elif aez_tclimate[i_r, i_c] == 4 and np.sum(meanT_monthly >= 10) >= 5 and np.sum(mean_temp > 20) >= 75 and np.sum(temp_acc_10deg) > 3000:
+        #                     aez_tzone[i_r, i_c] = 3
+
+        #                 # TZ4 Cool
+        #                 elif np.sum(meanT_monthly >= 10) >= 4 and np.mean(mean_temp) >= 0:
+        #                     aez_tzone[i_r, i_c] = 4
+
+        #                 # TZ5 Cold
+        #                 elif np.sum(meanT_monthly >= 10) in range(1, 4) and np.mean(mean_temp) >= 0:
+        #                     aez_tzone[i_r, i_c] = 5
+
+        #                 # TZ6 Very cold
+        #                 elif np.sum(meanT_monthly < 10) == 12 or np.mean(mean_temp) < 0:
+        #                     aez_tzone[i_r, i_c] = 6
+
+        # # 3rd Step: Creation of Temperature Regime Classes
+        # # Temperature Regime Class Definition
+        # # 1 = Tropics, lowland (TRC1)
+        # # 2 = Tropics, highland (TRC2)
+        # # 3 = Subtropics, warm (TRC3)
+        # # 4 = Subtropics, moderately cool (TRC4)
+        # # 5 = Subtropics, cool (TRC5)
+        # # 6 = Temperate, moderate (TRC6)
+        # # 7 = Temperate, cool (TRC7)
+        # # 8 = Boreal, cold, no continuous or discontinuous occurrence of permafrost (TRC8)
+        # # 9 = Boreal, cold, with continuous or discontinuous occurrence of permafrost (TRC9)
+        # # 10 = Arctic, very cold (TRC10)
+
+        # aez_temp_regime = np.zeros((self.im_height, self.im_width), dtype=int)
+
+        # for i_r in range(self.im_height):
+        #     for i_c in range(self.im_width):
+        #         if self.set_mask:
+        #             if self.im_mask[i_r, i_c] == self.nodata_val:
+        #                 continue
+        #             else:
+
+        #                 if aez_tclimate[i_r, i_c] == 1 and aez_tzone[i_r, i_c] == 1:
+        #                     aez_temp_regime[i_r, i_c] = 1  # Tropics, lowland
+
+        #                 elif aez_tclimate[i_r, i_c] == 2 and aez_tzone[i_r, i_c] in [2, 4]:
+        #                     aez_temp_regime[i_r, i_c] = 2  # Tropics, highland
+
+        #                 elif aez_tclimate[i_r, i_c] == 3 and aez_tzone[i_r, i_c] == 1:
+        #                     aez_temp_regime[i_r, i_c] = 3  # Subtropics, warm
+
+        #                 elif aez_tclimate[i_r, i_c] == 3 and aez_tzone[i_r, i_c] == 2:
+        #                     # Subtropics,moderate cool
+        #                     aez_temp_regime[i_r, i_c] = 4
+
+        #                 elif aez_tclimate[i_r, i_c] == 3 and aez_tzone[i_r, i_c] == 4:
+        #                     aez_temp_regime[i_r, i_c] = 5  # Subtropics,cool
+
+        #                 elif aez_tclimate[i_r, i_c] == 4 and aez_tzone[i_r, i_c] == 3:
+        #                     # Temperate, moderate
+        #                     aez_temp_regime[i_r, i_c] = 6
+
+        #                 elif aez_tclimate[i_r, i_c] == 4 and aez_tzone[i_r, i_c] == 4:
+        #                     aez_temp_regime[i_r, i_c] = 7  # Temperate, cool
+
+        #                 elif aez_tclimate[i_r, i_c] in range(2, 6) and aez_tzone[i_r, i_c] == 5:
+        #                     if np.logical_or(permafrost[i_r, i_c] == 1, permafrost[i_r, i_c] == 2) == False:
+        #                         # Boreal/Cold, no
+        #                         aez_temp_regime[i_r, i_c] = 8
+        #                     else:
+        #                         # Boreal/Cold, with permafrost
+        #                         aez_temp_regime[i_r, i_c] = 9
+
+        #                 elif aez_tclimate[i_r, i_c] in range(2, 7) and aez_tzone[i_r, i_c] == 6:
+        #                     aez_temp_regime[i_r, i_c] = 10  # Arctic/Very Cold
+
+        # # 4th Step: Moisture Regime classes
+        # # Moisture Regime Class Definition
+        # # 1 = M1 (desert/arid areas, 0 <= LGP* < 60)
+        # # 2 = M2 (semi-arid/dry areas, 60 <= LGP* < 180)
+        # # 3 = M3 (sub-humid/moist areas, 180 <= LGP* < 270)
+        # # 4 = M4 (humid/wet areas, LGP* >= 270)
+
+        # aez_moisture_regime = np.zeros(
+        #     (self.im_height, self.im_width), dtype=int)
+
+        # for i_r in range(self.im_height):
+        #     for i_c in range(self.im_width):
+        #         if self.set_mask:
+        #             if self.im_mask[i_r, i_c] == self.nodata_val:
+        #                 continue
+        #             else:
+
+        #                 # check if LGP t>5 is greater or less than 330 days. If greater, LGP will be used; otherwise, LGP_equv will be used.
+        #                 if lgpt_5[i_r, i_c] > 330:
+
+        #                     # Class 4 (M4)
+        #                     if lgp[i_r, i_c] >= 270:
+        #                         aez_moisture_regime[i_r, i_c] = 4
+
+        #                     # Class 3 (M3)
+        #                     elif lgp[i_r, i_c] >= 180 and lgp[i_r, i_c] < 270:
+        #                         aez_moisture_regime[i_r, i_c] = 3
+
+        #                     # Class 2 (M2)
+        #                     elif lgp[i_r, i_c] >= 60 and lgp[i_r, i_c] < 180:
+        #                         aez_moisture_regime[i_r, i_c] = 2
+
+        #                     # Class 1 (M1)
+        #                     elif lgp[i_r, i_c] >= 0 and lgp[i_r, i_c] < 60:
+        #                         aez_moisture_regime[i_r, i_c] = 1
+
+        #                 elif lgpt_5[i_r, i_c] <= 330:
+
+        #                     # Class 4 (M4)
+        #                     if lgp_equv[i_r, i_c] >= 270:
+        #                         aez_moisture_regime[i_r, i_c] = 4
+
+        #                     # Class 3 (M3)
+        #                     elif lgp_equv[i_r, i_c] >= 180 and lgp_equv[i_r, i_c] < 270:
+        #                         aez_moisture_regime[i_r, i_c] = 3
+
+        #                     # Class 2 (M2)
+        #                     elif lgp_equv[i_r, i_c] >= 60 and lgp_equv[i_r, i_c] < 180:
+        #                         aez_moisture_regime[i_r, i_c] = 2
+
+        #                     # Class 1 (M1)
+        #                     elif lgp_equv[i_r, i_c] >= 0 and lgp_equv[i_r, i_c] < 60:
+        #                         aez_moisture_regime[i_r, i_c] = 1
+
+        # # Now, we will classify the agro-ecological zonation
+        # # By GAEZ v4 Documentation, there are prioritized sequential assignment of AEZ classes in order to ensure the consistency of classification
+        # aez = np.zeros((self.im_height, self.im_width), dtype=int)
+
+        # for i_r in range(self.im_height):
+        #     for i_c in range(self.im_width):
+        #         if self.set_mask:
+        #             if self.im_mask[i_r, i_c] == self.nodata_val:
+        #                 continue
+        #             else:
+        #                 # if it's urban built-up lulc, Dominantly urban/built-up land
+        #                 if soil_terrain_lulc[i_r, i_c] == 8:
+        #                     aez[i_r, i_c] = 56
+
+        #                 # if it's water/ dominantly water
+        #                 elif soil_terrain_lulc[i_r, i_c] == 7:
+        #                     aez[i_r, i_c] = 57
+
+        #                 # if it's dominantly very steep terrain/Dominantly very steep terrain
+        #                 elif soil_terrain_lulc[i_r, i_c] == 1:
+        #                     aez[i_r, i_c] = 49
+
+        #                 # if it's irrigated soils/ Land with ample irrigated soils
+        #                 elif soil_terrain_lulc[i_r, i_c] == 6:
+        #                     aez[i_r, i_c] = 51
+
+        #                 # if it's hydromorphic soils/ Dominantly hydromorphic soils
+        #                 elif soil_terrain_lulc[i_r, i_c] == 2:
+        #                     aez[i_r, i_c] = 52
+
+        #                 # Desert/Arid climate
+        #                 elif aez_moisture_regime[i_r, i_c] == 1:
+        #                     aez[i_r, i_c] = 53
+
+        #                 # BO/Cold climate, with Permafrost
+        #                 elif aez_temp_regime[i_r, i_c] == 9 and aez_moisture_regime[i_r, i_c] in [1, 2, 3, 4] == True:
+        #                     aez[i_r, i_c] = 54
+
+        #                 # Arctic/ Very cold climate
+        #                 elif aez_temp_regime[i_r, i_c] == 10 and aez_moisture_regime[i_r, i_c] in [1, 2, 3, 4] == True:
+        #                     aez[i_r, i_c] = 55
+
+        #                 # Severe soil/terrain limitations
+        #                 elif soil_terrain_lulc[i_r, i_c] == 5:
+        #                     aez[i_r, i_c] = 50
+
+        #                 #######
+        #                 elif aez_temp_regime[i_r, i_c] == 1 and aez_moisture_regime[i_r, i_c] == 2 and soil_terrain_lulc[i_r, i_c] == 3:
+        #                     aez[i_r, i_c] = 1
+
+        #                 elif aez_temp_regime[i_r, i_c] == 1 and aez_moisture_regime[i_r, i_c] == 2 and soil_terrain_lulc[i_r, i_c] == 4:
+        #                     aez[i_r, i_c] = 2
+
+        #                 elif aez_temp_regime[i_r, i_c] == 1 and aez_moisture_regime[i_r, i_c] == 3 and soil_terrain_lulc[i_r, i_c] == 3:
+        #                     aez[i_r, i_c] = 3
+
+        #                 elif aez_temp_regime[i_r, i_c] == 1 and aez_moisture_regime[i_r, i_c] == 3 and soil_terrain_lulc[i_r, i_c] == 4:
+        #                     aez[i_r, i_c] = 4
+
+        #                 elif aez_temp_regime[i_r, i_c] == 1 and aez_moisture_regime[i_r, i_c] == 4 and soil_terrain_lulc[i_r, i_c] == 3:
+        #                     aez[i_r, i_c] = 5
+
+        #                 elif aez_temp_regime[i_r, i_c] == 1 and aez_moisture_regime[i_r, i_c] == 4 and soil_terrain_lulc[i_r, i_c] == 4:
+        #                     aez[i_r, i_c] = 6
+        #                 ####
+        #                 elif aez_temp_regime[i_r, i_c] == 2 and aez_moisture_regime[i_r, i_c] == 2 and soil_terrain_lulc[i_r, i_c] == 3:
+        #                     aez[i_r, i_c] = 7
+
+        #                 elif aez_temp_regime[i_r, i_c] == 2 and aez_moisture_regime[i_r, i_c] == 2 and soil_terrain_lulc[i_r, i_c] == 4:
+        #                     aez[i_r, i_c] = 8
+
+        #                 elif aez_temp_regime[i_r, i_c] == 2 and aez_moisture_regime[i_r, i_c] == 3 and soil_terrain_lulc[i_r, i_c] == 3:
+        #                     aez[i_r, i_c] = 9
+
+        #                 elif aez_temp_regime[i_r, i_c] == 2 and aez_moisture_regime[i_r, i_c] == 3 and soil_terrain_lulc[i_r, i_c] == 4:
+        #                     aez[i_r, i_c] = 10
+
+        #                 elif aez_temp_regime[i_r, i_c] == 2 and aez_moisture_regime[i_r, i_c] == 4 and soil_terrain_lulc[i_r, i_c] == 3:
+        #                     aez[i_r, i_c] = 11
+
+        #                 elif aez_temp_regime[i_r, i_c] == 2 and aez_moisture_regime[i_r, i_c] == 4 and soil_terrain_lulc[i_r, i_c] == 4:
+        #                     aez[i_r, i_c] = 12
+        #                 ###
+        #                 elif aez_temp_regime[i_r, i_c] == 3 and aez_moisture_regime[i_r, i_c] == 2 and soil_terrain_lulc[i_r, i_c] == 3:
+        #                     aez[i_r, i_c] = 13
+
+        #                 elif aez_temp_regime[i_r, i_c] == 3 and aez_moisture_regime[i_r, i_c] == 2 and soil_terrain_lulc[i_r, i_c] == 4:
+        #                     aez[i_r, i_c] = 14
+
+        #                 elif aez_temp_regime[i_r, i_c] == 3 and aez_moisture_regime[i_r, i_c] == 3 and soil_terrain_lulc[i_r, i_c] == 3:
+        #                     aez[i_r, i_c] = 15
+
+        #                 elif aez_temp_regime[i_r, i_c] == 3 and aez_moisture_regime[i_r, i_c] == 3 and soil_terrain_lulc[i_r, i_c] == 4:
+        #                     aez[i_r, i_c] = 16
+
+        #                 elif aez_temp_regime[i_r, i_c] == 3 and aez_moisture_regime[i_r, i_c] == 4 and soil_terrain_lulc[i_r, i_c] == 3:
+        #                     aez[i_r, i_c] = 17
+
+        #                 elif aez_temp_regime[i_r, i_c] == 3 and aez_moisture_regime[i_r, i_c] == 4 and soil_terrain_lulc[i_r, i_c] == 4:
+        #                     aez[i_r, i_c] = 18
+        #                 #####
+        #                 elif aez_temp_regime[i_r, i_c] == 4 and aez_moisture_regime[i_r, i_c] == 2 and soil_terrain_lulc[i_r, i_c] == 3:
+        #                     aez[i_r, i_c] = 19
+
+        #                 elif aez_temp_regime[i_r, i_c] == 4 and aez_moisture_regime[i_r, i_c] == 2 and soil_terrain_lulc[i_r, i_c] == 4:
+        #                     aez[i_r, i_c] = 20
+
+        #                 elif aez_temp_regime[i_r, i_c] == 4 and aez_moisture_regime[i_r, i_c] == 3 and soil_terrain_lulc[i_r, i_c] == 3:
+        #                     aez[i_r, i_c] = 21
+
+        #                 elif aez_temp_regime[i_r, i_c] == 4 and aez_moisture_regime[i_r, i_c] == 3 and soil_terrain_lulc[i_r, i_c] == 4:
+        #                     aez[i_r, i_c] = 22
+
+        #                 elif aez_temp_regime[i_r, i_c] == 4 and aez_moisture_regime[i_r, i_c] == 4 and soil_terrain_lulc[i_r, i_c] == 3:
+        #                     aez[i_r, i_c] = 23
+
+        #                 elif aez_temp_regime[i_r, i_c] == 4 and aez_moisture_regime[i_r, i_c] == 4 and soil_terrain_lulc[i_r, i_c] == 4:
+        #                     aez[i_r, i_c] = 24
+        #                 #####
+        #                 elif aez_temp_regime[i_r, i_c] == 5 and aez_moisture_regime[i_r, i_c] == 2 and soil_terrain_lulc[i_r, i_c] == 3:
+        #                     aez[i_r, i_c] = 25
+
+        #                 elif aez_temp_regime[i_r, i_c] == 5 and aez_moisture_regime[i_r, i_c] == 2 and soil_terrain_lulc[i_r, i_c] == 4:
+        #                     aez[i_r, i_c] = 26
+
+        #                 elif aez_temp_regime[i_r, i_c] == 5 and aez_moisture_regime[i_r, i_c] == 3 and soil_terrain_lulc[i_r, i_c] == 3:
+        #                     aez[i_r, i_c] = 27
+
+        #                 elif aez_temp_regime[i_r, i_c] == 5 and aez_moisture_regime[i_r, i_c] == 3 and soil_terrain_lulc[i_r, i_c] == 4:
+        #                     aez[i_r, i_c] = 28
+
+        #                 elif aez_temp_regime[i_r, i_c] == 5 and aez_moisture_regime[i_r, i_c] == 4 and soil_terrain_lulc[i_r, i_c] == 3:
+        #                     aez[i_r, i_c] = 29
+
+        #                 elif aez_temp_regime[i_r, i_c] == 5 and aez_moisture_regime[i_r, i_c] == 4 and soil_terrain_lulc[i_r, i_c] == 4:
+        #                     aez[i_r, i_c] = 30
+        #                 ######
+
+        #                 elif aez_temp_regime[i_r, i_c] == 6 and aez_moisture_regime[i_r, i_c] == 2 and soil_terrain_lulc[i_r, i_c] == 3:
+        #                     aez[i_r, i_c] = 31
+
+        #                 elif aez_temp_regime[i_r, i_c] == 6 and aez_moisture_regime[i_r, i_c] == 2 and soil_terrain_lulc[i_r, i_c] == 4:
+        #                     aez[i_r, i_c] = 32
+
+        #                 elif aez_temp_regime[i_r, i_c] == 6 and aez_moisture_regime[i_r, i_c] == 3 and soil_terrain_lulc[i_r, i_c] == 3:
+        #                     aez[i_r, i_c] = 33
+
+        #                 elif aez_temp_regime[i_r, i_c] == 6 and aez_moisture_regime[i_r, i_c] == 3 and soil_terrain_lulc[i_r, i_c] == 4:
+        #                     aez[i_r, i_c] = 34
+
+        #                 elif aez_temp_regime[i_r, i_c] == 6 and aez_moisture_regime[i_r, i_c] == 4 and soil_terrain_lulc[i_r, i_c] == 3:
+        #                     aez[i_r, i_c] = 35
+
+        #                 elif aez_temp_regime[i_r, i_c] == 6 and aez_moisture_regime[i_r, i_c] == 4 and soil_terrain_lulc[i_r, i_c] == 4:
+        #                     aez[i_r, i_c] = 36
+
+        #                 ###
+        #                 elif aez_temp_regime[i_r, i_c] == 7 and aez_moisture_regime[i_r, i_c] == 2 and soil_terrain_lulc[i_r, i_c] == 3:
+        #                     aez[i_r, i_c] = 37
+
+        #                 elif aez_temp_regime[i_r, i_c] == 7 and aez_moisture_regime[i_r, i_c] == 2 and soil_terrain_lulc[i_r, i_c] == 4:
+        #                     aez[i_r, i_c] = 38
+
+        #                 elif aez_temp_regime[i_r, i_c] == 7 and aez_moisture_regime[i_r, i_c] == 3 and soil_terrain_lulc[i_r, i_c] == 3:
+        #                     aez[i_r, i_c] = 39
+
+        #                 elif aez_temp_regime[i_r, i_c] == 7 and aez_moisture_regime[i_r, i_c] == 3 and soil_terrain_lulc[i_r, i_c] == 4:
+        #                     aez[i_r, i_c] = 40
+
+        #                 elif aez_temp_regime[i_r, i_c] == 7 and aez_moisture_regime[i_r, i_c] == 4 and soil_terrain_lulc[i_r, i_c] == 3:
+        #                     aez[i_r, i_c] = 41
+
+        #                 elif aez_temp_regime[i_r, i_c] == 7 and aez_moisture_regime[i_r, i_c] == 4 and soil_terrain_lulc[i_r, i_c] == 4:
+        #                     aez[i_r, i_c] = 42
+        #                 #####
+
+        #                 elif aez_temp_regime[i_r, i_c] == 8 and aez_moisture_regime[i_r, i_c] == 2 and soil_terrain_lulc[i_r, i_c] == 3:
+        #                     aez[i_r, i_c] = 43
+
+        #                 elif aez_temp_regime[i_r, i_c] == 8 and aez_moisture_regime[i_r, i_c] == 2 and soil_terrain_lulc[i_r, i_c] == 4:
+        #                     aez[i_r, i_c] = 44
+
+        #                 elif aez_temp_regime[i_r, i_c] == 8 and aez_moisture_regime[i_r, i_c] == 3 and soil_terrain_lulc[i_r, i_c] == 3:
+        #                     aez[i_r, i_c] = 45
+
+        #                 elif aez_temp_regime[i_r, i_c] == 8 and aez_moisture_regime[i_r, i_c] == 3 and soil_terrain_lulc[i_r, i_c] == 4:
+        #                     aez[i_r, i_c] = 46
+
+        #                 elif aez_temp_regime[i_r, i_c] == 8 and aez_moisture_regime[i_r, i_c] == 4 and soil_terrain_lulc[i_r, i_c] == 3:
+        #                     aez[i_r, i_c] = 47
+
+        #                 elif aez_temp_regime[i_r, i_c] == 8 and aez_moisture_regime[i_r, i_c] == 4 and soil_terrain_lulc[i_r, i_c] == 4:
+        #                     aez[i_r, i_c] = 48          
+
+        # if self.set_mask:
+        #     return np.where(self.im_mask, aez, np.nan)
+        # else:        
+        #     return aez
     
     """ 
     Note from Swun: In this code, the logic of temperature amplitude is not added 

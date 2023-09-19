@@ -186,53 +186,53 @@ class ClimateRegime(object):
                     else:
                         thermal_climate[i_row, i_col] = 1  # Tropical lowland
                         
-                # SubTropic
-                elif np.min(meanT_monthly_sealevel) >= 5. and np.sum(meanT_monthly_sealevel >= 10) >= 8:
-                    if np.sum(self.totalPrec_daily[i_row,i_col,:]) < 250:
-                        # 'Subtropics Low Rainfall
-                        thermal_climate[i_row,i_col] = 3
-                    elif self.latitude[i_row,i_col]>=0: 
-                        if summer_PET0 >= winter_PET0:
-                            # Subtropics Summer Rainfall
-                            thermal_climate[i_row,i_col] = 4
-                        else:
-                            # Subtropics Winter Rainfall
-                            thermal_climate[i_row,i_col] = 5
-                    else:
-                        if summer_PET0 >= winter_PET0:
-                            # Subtropics Winter Rainfall
-                            thermal_climate[i_row,i_col] = 5                     
-                        else:
-                            # Subtropics Summer Rainfall
-                            thermal_climate[i_row,i_col] = 4
+                # # SubTropic
+                # elif np.min(meanT_monthly_sealevel) >= 5. and np.sum(meanT_monthly_sealevel >= 10) >= 8:
+                #     if np.sum(self.totalPrec_daily[i_row,i_col,:]) < 250:
+                #         # 'Subtropics Low Rainfall
+                #         thermal_climate[i_row,i_col] = 3
+                #     elif self.latitude[i_row,i_col]>=0: 
+                #         if summer_PET0 >= winter_PET0:
+                #             # Subtropics Summer Rainfall
+                #             thermal_climate[i_row,i_col] = 4
+                #         else:
+                #             # Subtropics Winter Rainfall
+                #             thermal_climate[i_row,i_col] = 5
+                #     else:
+                #         if summer_PET0 >= winter_PET0:
+                #             # Subtropics Winter Rainfall
+                #             thermal_climate[i_row,i_col] = 5                     
+                #         else:
+                #             # Subtropics Summer Rainfall
+                #             thermal_climate[i_row,i_col] = 4
 
                         
-                # Temperate
-                elif np.sum(meanT_monthly_sealevel >= 10) >= 4:
-                    if Ta_diff <= 20:
-                        # Oceanic Temperate
-                        thermal_climate[i_row, i_col] = 6
-                    elif Ta_diff <= 35:
-                        # Sub-Continental Temperate
-                        thermal_climate[i_row, i_col] = 7
-                    else:
-                        # Continental Temperate
-                        thermal_climate[i_row, i_col] = 8
+                # # Temperate
+                # elif np.sum(meanT_monthly_sealevel >= 10) >= 4:
+                #     if Ta_diff <= 20:
+                #         # Oceanic Temperate
+                #         thermal_climate[i_row, i_col] = 6
+                #     elif Ta_diff <= 35:
+                #         # Sub-Continental Temperate
+                #         thermal_climate[i_row, i_col] = 7
+                #     else:
+                #         # Continental Temperate
+                #         thermal_climate[i_row, i_col] = 8
 
-                elif np.sum(meanT_monthly_sealevel >= 10) >= 1:
-                    # Boreal
-                    if Ta_diff <= 20:
-                        # Oceanic Boreal
-                        thermal_climate[i_row, i_col] = 9
-                    elif Ta_diff <= 35:
-                        # Sub-Continental Boreal
-                        thermal_climate[i_row, i_col] = 10
-                    else:
-                        # Continental Boreal
-                        thermal_climate[i_row, i_col] = 11
-                else:
-                    # Arctic
-                    thermal_climate[i_row, i_col] = 12
+                # elif np.sum(meanT_monthly_sealevel >= 10) >= 1:
+                #     # Boreal
+                #     if Ta_diff <= 20:
+                #         # Oceanic Boreal
+                #         thermal_climate[i_row, i_col] = 9
+                #     elif Ta_diff <= 35:
+                #         # Sub-Continental Boreal
+                #         thermal_climate[i_row, i_col] = 10
+                #     else:
+                #         # Continental Boreal
+                #         thermal_climate[i_row, i_col] = 11
+                # else:
+                #     # Arctic
+                #     thermal_climate[i_row, i_col] = 12
                     
         if self.set_mask:
             return np.where(self.im_mask, thermal_climate, np.nan)
