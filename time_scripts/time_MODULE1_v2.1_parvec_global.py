@@ -2,8 +2,6 @@
 # Date: 03/2023
 # Description: time the different functions of pyaez module 1 (Climate Regime)
 
-# import packages
-# import matplotlib.pyplot as plt
 import os
 import sys
 import numpy as np
@@ -12,18 +10,17 @@ try:
 except:
     import gdal
 import rioxarray as rio
-# import xarray as xr
 from time import time as timeit
 from collections import OrderedDict as odict
-# import dask.array as da
-# import dask
 
 #############################################################################
 # SET UP
-# these are the things that may need to be updated per user
+# update the appropriate settings below (everything up to "Main Code") 
+# for every execution and user 
 #############################################################################
 
 # set up directories
+
 # HPC Orion
 #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 # change this to your PyAEZ directory
@@ -35,56 +32,57 @@ from collections import OrderedDict as odict
 # elevfile = '/work/hpc/datasets/un_fao/pyaez/china_static/tif/elev.tif'
 # out_path = work_dir+'time_scripts/results/' # path for saving output data
 
+##################
 # Kerrie laptop
-work_dir = 'C://Users/kerrie/Documents/01_LocalCode/repos/PyAEZ/' # path to your PyAEZ repo
+##################
+# work_dir = r'C://Users/kerrie/Documents/01_LocalCode/repos/PyAEZ/' # path to your PyAEZ repo
+# v_folder = r'pyaez2.1_parvec/'
+# out_path = work_dir+'time_scripts/results/' # path for saving output data
+
+# data_dir = r'C://Users/kerrie/Documents/02_LocalData/pyAEZ_input_data/china/npy/' # path to your data
+# maskfile = r'C://Users/kerrie/Documents/02_LocalData/pyAEZ_input_data/china/tif/mask.tif'# subset for no antarctica, 1800 lats
+# elevfile = r'C://Users/kerrie/Documents/02_LocalData/pyAEZ_input_data/china/tif/elev.tif'
+# soilfile = r'C://Users/kerrie/Documents/02_LocalData/pyAEZ_input_data/china/tif/soil_terrain_lulc_china_08333.tif'
+
+# data_dir = r'C://Users/kerrie/Documents/02_LocalData/pyAEZ_input_data/global_NOTPRODUCTION/npy/' # path to your data
+# maskfile = r'C://Users/kerrie/Documents/02_LocalData/pyAEZ_input_data/global_NOTPRODUCTION/tif/mask_2268708_5m.tif'# subset for no antarctica, 1800 lats
+# elevfile = r'C://Users/kerrie/Documents/02_LocalData/pyAEZ_input_data/global_NOTPRODUCTION/tif/Elevation_2268708_5m.tif'
+# soilfile = r'C://Users/kerrie/Documents/02_LocalData/pyAEZ_input_data/global_NOTPRODUCTION/tif/soil_terrain_lulc_global_08333.tif'
+
+##################
+# Kerrie desktop
+##################
+work_dir = r'K:/projects/unfao/pyaez_gaez/repos/PyAEZ_kerrie/PyAEZ/' # path to your PyAEZ repo
+v_folder = r'pyaez2.1_parvec/'
 out_path = work_dir+'time_scripts/results/' # path for saving output data
 
-data_dir = 'C://Users/kerrie/Documents/02_LocalData/pyAEZ_input_data/china/npy/' # path to your data
-maskfile = 'C://Users/kerrie/Documents/02_LocalData/pyAEZ_input_data/china/tif/mask.tif'# subset for no antarctica, 1800 lats
-elevfile = 'C://Users/kerrie/Documents/02_LocalData/pyAEZ_input_data/china/tif/elev.tif'
+# china
+# data_dir = r'C://Users/kerrie.WIN/Documents/data/pyAEZ_data_inputs_china_03272023/npy/' # path to your data
+# maskfile = r'C://Users/kerrie.WIN/Documents/data/pyAEZ_data_inputs_china_03272023/tif/mask.tif'# subset for no antarctica, 1800 lats
+# elevfile = r'C://Users/kerrie.WIN/Documents/data/pyAEZ_data_inputs_china_03272023/tif/elev.tif'
+# soilfile = r'C://Users/kerrie.WIN/Documents/data/pyAEZ_data_inputs_china_03272023/tif/soil_terrain_lulc_china_08333.tif'
 
-# data_dir = 'C://Users/kerrie/Documents/02_LocalData/pyAEZ_input_data/global_NOTPRODUCTION/npy/' # path to your data
-# maskfile = 'C://Users/kerrie/Documents/02_LocalData/pyAEZ_input_data/global_NOTPRODUCTION/tif/mask_2268708_5m.tif'# subset for no antarctica, 1800 lats
-# elevfile = 'C://Users/kerrie/Documents/02_LocalData/pyAEZ_input_data/global_NOTPRODUCTION/tif/Elevation_2268708_5m.tif'
-
-# Create output dir if it does not exist
-isExist = os.path.exists(out_path)
-if not isExist:
-   os.makedirs(out_path)
-
-sys.path.append(work_dir+'pyaez2.1_parvec/') # add pyaez model to system path
-# import ClimateRegime_v21pv as ClimateRegime
-# clim_reg = ClimateRegime.ClimateRegime()
-# import UtilitiesCalc_v21pv as UtilitiesCalc
-# obj_utilities=UtilitiesCalc.UtilitiesCalc()
-import ClimateRegime_loopchunks as ClimateRegime
-clim_reg = ClimateRegime.ClimateRegime()
-# import UtilitiesCalc_v21pv as UtilitiesCalc
-import UtilitiesCalc_test as UtilitiesCalc
-obj_utilities=UtilitiesCalc.UtilitiesCalc()
+# # global
+data_dir = r'C://Users/kerrie.WIN/Documents/data/pyAEZ_data_inputs_global_NOTPRODUCTION/npy/' # path to your data
+maskfile = r'C://Users/kerrie.WIN/Documents/data/pyAEZ_data_inputs_global_NOTPRODUCTION/tif/mask_2268708_5m.tif'# subset for no antarctica, 1800 lats
+elevfile = r'C://Users/kerrie.WIN/Documents/data/pyAEZ_data_inputs_global_NOTPRODUCTION/tif/Elevation_2268708_5m.tif'
+soilfile = r'C://Users/kerrie.WIN/Documents/data/pyAEZ_data_inputs_global_NOTPRODUCTION/tif/soil_terrain_lulc_global_08333_clipped.tif'
 
 # Define the Area-Of-Interest's geographical extents
-lat_centers=True 
-lats=rio.open_rasterio(maskfile)['y'].data
-lat_min = np.trunc(lats.min()*100000)/100000 # use only 5 decimal places
-lat_max = np.trunc(lats.max()*100000)/100000 # use only 5 decimal places
-mask_path=maskfile
+lat_centers=True # are your lat/lon values at the grid cell center (True) or at the edges (False)
 mask_value = 0  # pixel value in admin_mask to exclude from the analysis
 daily = True # Type of climate data = True: daily, False: monthly
-parallel=False#True#
+parallel=True#False# Use dask parallel processing (True) or don't use dask and only use numpy (False)
 
 #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 # enter personal and system info for output filename
-domain='china'#'global'#
+domain='global'#'china'# description of the input data domain
 person='KLG' # your initials
-location='home' #'SSC' # nickname for your location
-computer='Windows10' #Windows10 # operating system
-processor='IntelCorei7-12800H' #'IntelZeonW2225' # 'bigmem' # processor
-ram='32GB' # RAM
-test_tag='v2.1_parvecg_np' # short description of what is being timed
-
-outfile=out_path+'time_results_'+domain+'_'\
-    +test_tag+'_'+person+'_'+location+'_'+computer+'_'+processor+'_'+ram+'.txt'
+location='SSC' #'home' # nickname for your location
+computer='Windows10'  # operating system
+processor='IntelZeonW2225' #'IntelCorei7-12800H' # 'bigmem' # name of your computer chip/processor
+ram='32GB' # how much RAM your machine has
+test_tag='v2.1_parvecg'#'v2.1_parvecg_np' # # short description of which code version is being timed
 #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 # choose which functions should be timed
@@ -96,14 +94,8 @@ timetests=['all']
 #         'setStudyAreaMask',
 #         'setLocationTerrainData',
 #         'getThermalClimate',
-#         'getThermalZone',
 #         'getThermalLGP0, getThermalLGP5, getThermalLGP10',
-#         'getTemperatureSum0, getTemperatureSum5, getTemperatureSum10',
-#         'getTemperatureProfile',        
-#         'getLGP, getLGPClassified, getLGPEquivalent',
-#         'getMultiCroppingZones',
-#         'AirFrostIndexandPermafrostEvaluation',
-#         'TZoneFallowRequirement']
+#         'getLGP, getLGPClassified, getLGPEquivalent']
 
 # labels for timing each function
 # don't change these
@@ -122,15 +114,6 @@ timelabels=['module1 all funcs',
         'AirFrostIndexandPermafrostEvaluation',
         'TZoneFallowRequirement',
         'AEZClassification']
-
-labels=timelabels
-if daily:
-    labels.insert(4,'setDailyClimateData')
-else:
-    labels.insert(4,'setMonthlyClimateData')
-
-labels=labels[:-1] # take this out after soil_terrrain_lulc is prepared
-results=odict.fromkeys(labels)
 #############################################################################
 #############################################################################
 
@@ -142,39 +125,74 @@ results=odict.fromkeys(labels)
 #####################################
 #####################################
 #####################################
+# Create output dir if it does not exist
+isExist = os.path.exists(out_path)
+if not isExist:
+   os.makedirs(out_path)
 
-starttime=timeit()
+sys.path.append(work_dir+v_folder) # add pyaez model to system path
 
-# Open the data files, this is quick
-taskstart=timeit()
+lats=rio.open_rasterio(maskfile)['y'].data
+lat_min = np.trunc(lats.min()*100000)/100000 # use only 5 decimal places
+lat_max = np.trunc(lats.max()*100000)/100000 # use only 5 decimal places
+mask_path=maskfile
+outfile=out_path+'time_results_'+domain+'_'\
+    +test_tag+'_'+person+'_'+location+'_'+computer+'_'+processor+'_'+ram+'.txt'
+
+labels=timelabels
+if daily:
+    labels.insert(4,'setDailyClimateData')
+else:
+    labels.insert(4,'setMonthlyClimateData')
+
+results=odict.fromkeys(labels)
+
+# import ClimateRegime_v21pv as ClimateRegime
+# clim_reg = ClimateRegime.ClimateRegime()
+# import UtilitiesCalc_v21pv as UtilitiesCalc
+# obj_utilities=UtilitiesCalc.UtilitiesCalc()
+import ClimateRegime_loopchunks as ClimateRegime
+clim_reg = ClimateRegime.ClimateRegime()
+# import UtilitiesCalc_v21pv as UtilitiesCalc
+import UtilitiesCalc_test as UtilitiesCalc
+obj_utilities=UtilitiesCalc.UtilitiesCalc()
+
+
+starttime=timeit()  # overall timer
+
+# Task load data
+taskstart=timeit()  # task timer
 print('loading data')
-max_temp = np.load(data_dir+'Tmax-2m365/0.npy').astype('float32')  # maximum temperature
-min_temp = np.load(data_dir+'Tmin-2m365/0.npy').astype('float32')  # minimum temperature
-precipitation = np.load(data_dir+'Precip365/0.npy').astype('float32')  # precipitation
-rel_humidity = np.load(data_dir+'Rhum365/0.npy').astype('float32')  # relative humidity
-wind_speed = np.load(data_dir+'Wind-2m365/0.npy').astype('float32') # wind speed measured at two meters
-short_rad = np.load(data_dir+'Srad365/0.npy').astype('float32')  # shortwave radiation
-mask=gdal.Open(maskfile).ReadAsArray()
-elevation=gdal.Open(elevfile).ReadAsArray()
-
-# max_temp = da.from_npy_stack(data_dir+'Tmax-2m365/').astype('float32')  # maximum temperature
-# min_temp = da.from_npy_stack(data_dir+'Tmin-2m365/').astype('float32')  # minimum temperature
-# precipitation = da.from_npy_stack(data_dir+'Precip365/').astype('float32')  # precipitation
-# rel_humidity = da.from_npy_stack(data_dir+'Rhum365/').astype('float32')  # relative humidity
-# wind_speed = da.from_npy_stack(data_dir+'Wind-2m365/').astype('float32') # wind speed measured at two meters
-# short_rad = da.from_npy_stack(data_dir+'Srad365/').astype('float32')  # shortwave radiation
-# mask=da.from_array(gdal.Open(maskfile).ReadAsArray())
-# elevation=da.from_array(gdal.Open(elevfile).ReadAsArray())
+if parallel:
+    import dask.array as da
+    import dask
+    max_temp = da.from_npy_stack(data_dir+'Tmax-2m365/').astype('float32')  # maximum temperature
+    min_temp = da.from_npy_stack(data_dir+'Tmin-2m365/').astype('float32')  # minimum temperature
+    precipitation = da.from_npy_stack(data_dir+'Precip365/').astype('float32')  # precipitation
+    rel_humidity = da.from_npy_stack(data_dir+'Rhum365/').astype('float32')  # relative humidity
+    wind_speed = da.from_npy_stack(data_dir+'Wind-2m365/').astype('float32') # wind speed measured at two meters
+    short_rad = da.from_npy_stack(data_dir+'Srad365/').astype('float32')  # shortwave radiation
+    mask=da.from_array(gdal.Open(maskfile).ReadAsArray())
+    elevation=da.from_array(gdal.Open(elevfile).ReadAsArray())
+    soil_terrain_lulc=da.from_array(gdal.Open(soilfile).ReadAsArray())
+else:
+    max_temp = np.load(data_dir+'Tmax-2m365/0.npy').astype('float32')  # maximum temperature
+    min_temp = np.load(data_dir+'Tmin-2m365/0.npy').astype('float32')  # minimum temperature
+    precipitation = np.load(data_dir+'Precip365/0.npy').astype('float32')  # precipitation
+    rel_humidity = np.load(data_dir+'Rhum365/0.npy').astype('float32')  # relative humidity
+    wind_speed = np.load(data_dir+'Wind-2m365/0.npy').astype('float32') # wind speed measured at two meters
+    short_rad = np.load(data_dir+'Srad365/0.npy').astype('float32')  # shortwave radiation
+    mask=gdal.Open(maskfile).ReadAsArray()
+    elevation=gdal.Open(elevfile).ReadAsArray()
+    soil_terrain_lulc=gdal.Open(soilfile).ReadAsArray()
 
 results['input data load to mem time']=timeit()-taskstart
 
-# Module 1 class object set up
-
+# Task Module 1 class object set up
 taskstart=timeit()
 print('setting parallel option')
 clim_reg.setParallel(max_temp,parallel)#,nchunks=288)#,nchunks=864)
 results['setParallel']=timeit()-taskstart
-
 
 taskstart=timeit()
 print('setting mask')
@@ -200,6 +218,7 @@ else:
 
 del(min_temp, max_temp, precipitation, short_rad, wind_speed, rel_humidity) # free mem
 
+# Task module 1 functions
 
 #####################################
 # Thermal Climate
@@ -302,24 +321,11 @@ if (timetests==['all']) or ('TZoneFallowRequirement' in timetests):
 # #####################################
 # # Agro-ecological zone classification
 # #####################################
-# if (timetests==['all']) or ('AEZClassification' in timetests):
-#     print('AEZClassification')
-#     taskstart=timeit()
-#     aez = clim_reg.AEZClassification(
-#         tclimate, lgp, lgp_equv, lgpt5, soil_terrain_lulc, permafrost) # call function
-#     results['AEZClassification']=timeit()-taskstart
-
-    # # save png plot
-    # fig = plt.figure()
-    # plt.imshow(aez, cmap=plt.get_cmap('rainbow', 59), vmin=0, vmax=59)
-    # plt.title('Agro-ecological Zonation')
-    # plt.colorbar()
-    # plt.savefig(out_path+"aez.png",
-    #             bbox_inches="tight", dpi=300)
-
-    # # save tif data
-    # obj_utilities.saveRaster(
-    #     mask_path, out_path+'aez.tif', aez)
+if (timetests==['all']) or ('AEZClassification' in timetests):
+    print('AEZClassification')
+    taskstart=timeit()
+    aez = clim_reg.AEZClassification(tclimate, lgp, lgp_equv, lgpt5, soil_terrain_lulc, permafrost_eval[1]) # call function
+    results['AEZClassification']=timeit()-taskstart
 
 if timetests==['all']:
     results['module1 all funcs']=timeit()-starttime
