@@ -713,7 +713,8 @@ class ClimateRegime(object):
             nlons=int(np.ceil(self.chunk2D[1]*4))  # consider adding a user override for this
             bigchunk2D=(-1,nlons)
             bigchunk3D=(-1,nlons,-1)
-            nchunks=int(np.ceil(self.im_width/nlons))          
+            nchunks=int(np.ceil(self.im_width/nlons))    
+            print('using larger chunks:',nchunks,'total chunks instead of',self.nchunks)      
 
             # build task graph for istart0,istart1,p
             lgpt5=da.from_array(self.lgpt5,chunks=bigchunk2D)
@@ -763,7 +764,7 @@ class ClimateRegime(object):
             # func (which includes some parallelism) on each chunk, then concat the resulting lgp_tot chunks
             results=[]
             for i in range(nchunks):
-                if i%10 == 0: print('loop',i,'of',nchunks,', this message will print every 10 chunks')
+                if i%10 == 0: print('loop',(i+1),'of',nchunks,', this message prints every 10 chunks')
                 # convert input chunks to numpy arrays in memory
                 mask_np=mask_c.blocks[0,i].compute()
                 Tx365_np=Tx365_c.blocks[0,i,0].compute()
