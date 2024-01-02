@@ -153,21 +153,21 @@ class UtilitiesCalc(object):
             import dask.array as da
             # For lat_min, lat_max values given at pixel centers    
             if location:
-                lat_vals=da.linspace(lat_min, lat_max, im_height).astype('float32')    
+                lat_vals=da.linspace(lat_max, lat_min,  im_height).astype('float32')    
                 lat_map=da.broadcast_to(lat_vals[:,np.newaxis],(im_height,im_width),chunks=self.chunk2D)            
             # For lat_min, lat_max values given at exterior pixel edges    
             if ~location:
                 lat_step=(lat_max-lat_min)/im_height    
-                lat_vals = da.linspace(lat_min+lat_step/2, lat_max-lat_step/2, im_height)    
+                lat_vals = da.linspace(lat_max-lat_step/2, lat_min+lat_step/2,  im_height)    
                 lat_map=da.broadcast_to(lat_vals[:,np.newaxis],(im_height,im_width),chunks=self.chunk2D)            
         # for serial computing
         else:     
             if location:
-                lat_vals=np.linspace(lat_min, lat_max, im_height).astype('float32')    
+                lat_vals=np.linspace(lat_max, lat_min, im_height).astype('float32')    
                 lat_map=np.broadcast_to(lat_vals[:,np.newaxis],(im_height,im_width))                
             if ~location:
                 lat_step=(lat_max-lat_min)/im_height    
-                lat_vals = np.linspace(lat_min+lat_step/2, lat_max-lat_step/2, im_height)    
+                lat_vals = np.linspace(lat_max-lat_step/2, lat_min+lat_step/2,  im_height)    
                 lat_map=np.broadcast_to(lat_vals[:,np.newaxis],(im_height,im_width))                  
         return lat_map
 

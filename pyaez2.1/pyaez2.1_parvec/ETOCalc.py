@@ -35,14 +35,14 @@ class ETOCalc(object):
         sdcl = (0.4093 * np.sin(0.017214206 * dayoyr - 1.405)).astype('float32')
         sdcl = np.broadcast_to(sdcl[np.newaxis, np.newaxis,:],(nlats,nlons,ndays))
 
-        # sunset hour angle
-        top=(-np.tan(latr)*np.tan(sdcl))
-        X = 1 - (np.tan(latr)**2)*(np.tan(sdcl)**2)
-        inds=(X<=0)
-        X[inds]=1.E-5
-        omg = 1.5708 - np.arctan(top/(X**0.5))
-        omg[inds]=0.
-        del top,X,inds      
+        # # sunset hour angle
+        # top=(-np.tan(latr)*np.tan(sdcl))
+        # X = 1 - (np.tan(latr)**2)*(np.tan(sdcl)**2)
+        # inds=(X<=0)
+        # X[inds]=1.E-5
+        # omg = 1.5708 - np.arctan(top/(X**0.5))
+        # omg[inds]=0.
+        # del top,X,inds      
 
         # relative distance earth to sun
         sdst = (1.0 + 0.033 * np.cos(0.017214206 * dayoyr)).astype('float32')
@@ -53,6 +53,13 @@ class ETOCalc(object):
         xx = (np.sin(sdcl) * np.sin(latr))
         yy = (np.cos(sdcl) * np.cos(latr))
         del sdcl,latr
+
+        zz=xx/yy
+        omg = np.tan(zz / (1. - zz*zz)**0.5) + 1.5708
+        omg=np.where((np.abs(zz) >= 0.9999)&(zz > 0),np.float32(np.pi),omg)
+        omg=np.where((np.abs(zz) >= 0.9999)&(zz <= 0),0,omg)
+        del zz
+
         ra = np.round((37.586 * sdst * (omg*xx + np.sin(omg)*yy)).astype('float32'),1)
         # print('omg,sdst,ra',omg.dtype,sdst.dtype,ra.dtype)
         del sdst, omg, xx, yy
@@ -161,3 +168,4 @@ class ETOCalc(object):
         # print('et0',et0.dtype)
 
         return et0.astype('float32')
+        # return latr.astype('float32')        

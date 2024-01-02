@@ -22,7 +22,7 @@ def rainPeak(meanT_daily, lgpt5):
         istart1(int): the ending date of the growing period
     """
     # get index of first occurrence in time where true at each grid cell  
-    day1=np.argmax(meanT_daily>=5.0,axis=2)   
+    day1=np.argmax(meanT_daily>=5,axis=2)   
     # argmax returns 0 where there is no first occurrence (no growing season) so need to fix  
     day1=np.where(lgpt5==0,np.nan,day1)  
     istart0=np.where((lgpt5<365),day1,0).astype('float32') # replaces if block  
@@ -103,16 +103,23 @@ def eta(mask,wb_old,etm,Sa,D,p,rain):
     Salim = max(Sa*D, 1.) 
     wr = np.where(100*(1.-p)>Salim,Salim,100*(1.-p))    
     # print('wx,wr',wx.dtype,wr.dtype)
+    
+    eta_local=np.empty(etm.shape)
+    eta_local[:]=np.float32(np.nan)
 
-    eta_local=np.where(rain>=etm,np.float32(etm),np.float32(np.nan))  
+    eta_local=np.where(rain>=etm,etm,eta_local) 
+    # eta_local=np.where(rain>=etm,np.float32(etm),np.float32(np.nan))  
     # print('eta_local1',eta_local.dtype)
-    eta_local=np.where((s-wr>=etm)& ~np.isfinite(eta_local),np.float32(etm),np.float32(eta_local))  
+    eta_local=np.where((~np.isfinite(eta_local))&(s-wr>=etm),etm,eta_local)
+    # eta_local=np.where((s-wr>=etm)& ~np.isfinite(eta_local),np.float32(etm),np.float32(eta_local))  
     # print('eta_local2',eta_local.dtype)
     rho=wb_old/wr  
     # print('rho',rho.dtype)
-    eta_local=np.where((rain+rho*etm >=etm) & (mask==1) & ~np.isfinite(eta_local),np.float32(etm),np.float32(eta_local))  
+    eta_local=np.where((~np.isfinite(eta_local))&(rain+rho*etm >= etm)&(mask==1),etm,eta_local)  
+    # eta_local=np.where((rain+rho*etm >=etm) & (mask==1) & ~np.isfinite(eta_local),np.float32(etm),np.float32(eta_local))  
     # print('eta_local3',eta_local.dtype)
-    eta_local=np.where((rain+rho*etm <etm) & (mask==1) & ~np.isfinite(eta_local),np.float32(rain+rho*etm),np.float32(eta_local))  
+    eta_local=np.where((~np.isfinite(eta_local))&(rain+rho*etm < etm)&(mask==1),rain+rho*etm,eta_local)  
+    # eta_local=np.where((rain+rho*etm <etm) & (mask==1) & ~np.isfinite(eta_local),np.float32(rain+rho*etm),np.float32(eta_local))  
     # print('eta_local4',eta_local.dtype)
 
     wb=s-eta_local          
@@ -160,7 +167,7 @@ def Eta_class(mask,lgpt5,ta,tx,tmelt):
     Returns:
         float: array of evapotransporation regime classes, shape (im_height,im_width)
     """      
-    # this method uses less RAM than where statements
+    # this method of assignment uses less RAM than where statements
     eta_class=np.zeros(tx.shape,dtype='int8')
     # category 1, snow
     inds = (ta<=0)
@@ -213,6 +220,7 @@ def EtaCalc_snow(classmap,classnum,kc_list,eto,sb_old,pr,wb_old,Sa,D,p):
         sb (float): daily value of the 'Snow balance' (mm), shape (im_height,im_width)
         kc (float): daily value of the 'crop coefficients for water requirements', shape (im_height,im_width)
         """ 
+    # mask everything 
     mask=np.where(classmap==classnum,1,0)
     eto=np.where(mask==1,eto,np.float32(np.nan))
     sb_old=np.where(mask==1,sb_old,np.float32(np.nan))
@@ -225,6 +233,7 @@ def EtaCalc_snow(classmap,classnum,kc_list,eto,sb_old,pr,wb_old,Sa,D,p):
     etm = kc * eto
     del eto, kc
     sbx = sb_old + pr 
+    # snm=np.zeros(sb_old.shape,dtype='float32')
     del sb_old    
 
     # call the eta subroutine
@@ -236,13 +245,14 @@ def EtaCalc_snow(classmap,classnum,kc_list,eto,sb_old,pr,wb_old,Sa,D,p):
     Eta=np.where(sbx>=etm,etm,Eta)
 
     wb=np.where(sbx>=etm,wb_old-etm,wb)
-    wb=np.where((sbx>=etm) & (wb>Salim),Salim,wb)    
+    wb=np.where((sbx>=etm) & (wb>Salim),Salim,wb)  
+    wb=np.where(wb<0,0,wb)  
     # what are we using wx for
     # wx=np.where((sbx>=etm) & (wb>Salim),wb-Salim,wx)
     # wx=np.where((sbx>=etm) & (wb<=Salim),0,wx) 
 
     # print('snow',mask.dtype,eto.dtype,sb_old.dtype,pr.dtype,wb_old.dtype,p.dtype,kc.dtype,sbx.dtype,etm.dtype,Eta.dtype,wb.dtype,sb.dtype)
-    return [etm, Eta, wb, sb]
+    return [etm, Eta, wb, sb]#,snm]
 
 
 def EtaCalc_snowmelting(classmap,classnum,kc_list,eto,sb_old,pr,wb_old,Sa,D,p,Fsnm,tx,tmelt):
@@ -284,7 +294,10 @@ def EtaCalc_snowmelting(classmap,classnum,kc_list,eto,sb_old,pr,wb_old,Sa,D,p,Fs
     etm = kc * eto
     del eto, kc
 
-    snm = np.where(Fsnm*(tx - tmelt) > sb_old, sb_old, Fsnm*(tx - tmelt))   
+    # snm = np.where(Fsnm*(tx - tmelt) > sb_old, sb_old, Fsnm*(tx - tmelt))   
+    snm=np.zeros(sb_old.shape,dtype='float32')
+    snm=np.where((sb_old>0.) & (Fsnm*(tx-tmelt)>sb_old),sb_old, snm) 
+    snm=np.where((sb_old>0.) & (Fsnm*(tx-tmelt)<sb_old),Fsnm*(tx-tmelt),snm)     
     del tx
     sbx=sb_old-snm 
     del sb_old
@@ -297,7 +310,7 @@ def EtaCalc_snowmelting(classmap,classnum,kc_list,eto,sb_old,pr,wb_old,Sa,D,p,Fs
 
     Eta=np.where(sbx>=etm,etm,Eta)
     wb=np.where(sbx>=etm,wb_old+snm+pr-etm,wb)
-    del snm, pr
+    del pr#,snm 
     wb=np.where((sbx>=etm) & (wb>Salim),Salim,wb)
     # wx=np.where((sbx>=etm) & (wb>Salim),wb-Salim,wx)
     # wx=np.where((sbx>=etm) & (wb<=Salim),0,wx)
@@ -305,7 +318,7 @@ def EtaCalc_snowmelting(classmap,classnum,kc_list,eto,sb_old,pr,wb_old,Sa,D,p,Fs
     wb=np.where(wb<0,0,wb)
 
     # print('snmelt',mask.dtype,eto.dtype,sb_old.dtype,pr.dtype,wb_old.dtype,p.dtype,tx.dtype,kc.dtype,snm.dtype,sbx.dtype,etm.dtype,Eta.dtype,wb.dtype,sb.dtype)
-    return [etm, Eta, wb, sb]
+    return [etm, Eta, wb, sb]#,snm]
 
 
 def EtaCalc_cold(classmap,classnum,kc_list,eto,sb_old,pr,wb_old,Sa,D,p,Fsnm,tx,tmelt):
@@ -347,19 +360,21 @@ def EtaCalc_cold(classmap,classnum,kc_list,eto,sb_old,pr,wb_old,Sa,D,p,Fsnm,tx,t
     etm = kc * eto
     del eto, kc
 
-    snm = np.where((Fsnm*(tx - tmelt) > sb_old), sb_old,Fsnm*(tx - tmelt))   
-    del tx
+    # snm = np.where((Fsnm*(tx - tmelt) > sb_old), sb_old,Fsnm*(tx - tmelt)) 
+    snm=np.zeros(sb_old.shape,dtype='float32')
+    snm=np.where((sb_old>0.) & (Fsnm*(tx-tmelt)>sb_old),sb_old, snm) 
+    snm=np.where((sb_old>0.) & (Fsnm*(tx-tmelt)<sb_old),Fsnm*(tx-tmelt),snm)   
     snm = np.where(sb_old<=0, 0, snm)   
     sb=sb_old-snm 
-    del sb_old
+    del tx,sb_old
 
     wb, wx, Eta = eta(mask,wb_old+snm, etm, Sa, D, p, pr)
-    del mask, wb_old, snm, p, pr, wx
+    del mask, wb_old, p, pr, wx#, snm
 
     Eta=np.where(Eta>etm,etm,Eta)
 
     # print('cold',mask.dtype,eto.dtype,sb_old.dtype,pr.dtype,wb_old.dtype,p.dtype,tx.dtype,kc.dtype,snm.dtype,etm.dtype,Eta.dtype,wb.dtype,sb.dtype)
-    return [etm, Eta, wb, sb]
+    return [etm, Eta, wb, sb]#,snm]
 
 
 def EtaCalc_warm(classmap,classnum,kc_list,eto,sb_old,pr,wb_old,Sa,D,p,Fsnm,tx,tmelt,istart,iend,idoy):
@@ -408,18 +423,21 @@ def EtaCalc_warm(classmap,classnum,kc_list,eto,sb_old,pr,wb_old,Sa,D,p,Fsnm,tx,t
     etm = kc * eto
     del eto, kc
 
-    snm=np.where(Fsnm*(tx-tmelt)>sb_old, sb_old, Fsnm*(tx-tmelt))
-    snm=np.where(sb_old<=0,0,snm)
+    snm=np.zeros(sb_old.shape,dtype='float32')
+    snm=np.where((sb_old>0.) & (Fsnm*(tx-tmelt)>sb_old),sb_old, snm) 
+    snm=np.where((sb_old>0.) & (Fsnm*(tx-tmelt)<sb_old),Fsnm*(tx-tmelt),snm) 
+    # snm=np.where(Fsnm*(tx-tmelt)>sb_old, sb_old, Fsnm*(tx-tmelt))
+    # snm=np.where(sb_old<=0,0,snm)
     del tx
     sb=sb_old-snm
     del sb_old
 
     wb, wx, Eta = eta(mask,wb_old+snm, etm, Sa, D, p, pr)
-    del mask,wb_old,snm,p,pr,wx
+    del mask,wb_old,p,pr,wx#,snm
     Eta=np.where(Eta>etm,etm,Eta)
 
     # print('warm',mask.dtype,eto.dtype,sb_old.dtype,pr.dtype,wb_old.dtype,p.dtype,tx.dtype,kc.dtype,snm.dtype,etm.dtype,Eta.dtype,wb.dtype,sb.dtype)
-    return [etm, Eta, wb, sb]
+    return [etm, Eta, wb, sb]#,snm]
 
 
 def EtaCalc_warmest(classmap,classnum,kc_list,eto,sb_old,pr,wb_old,Sa,D,p,Fsnm,tx,tmelt):
@@ -460,11 +478,14 @@ def EtaCalc_warmest(classmap,classnum,kc_list,eto,sb_old,pr,wb_old,Sa,D,p,Fsnm,t
     etm = kc * eto
     del eto,kc
 
-    snm=np.where(Fsnm*(tx-tmelt)>sb_old, sb_old, Fsnm*(tx-tmelt))
-    snm=np.where(sb_old<=0,0,snm)
+    snm=np.zeros(sb_old.shape,dtype='float32')
+    snm=np.where((sb_old>0.) & (Fsnm*(tx-tmelt)>sb_old),sb_old, snm) 
+    snm=np.where((sb_old>0.) & (Fsnm*(tx-tmelt)<sb_old),Fsnm*(tx-tmelt),snm)     
+    # snm=np.where(Fsnm*(tx-tmelt)>sb_old, sb_old, Fsnm*(tx-tmelt))
+    # snm=np.where(sb_old<=0,0,snm)
     del tx
-    sb=sb_old-snm
-    del sb_old,snm
+    sb=sb_old-snm #????
+    del sb_old#,snm
     
     wb, wx, Eta = eta(mask,wb_old, etm, Sa, D, p, pr)
     del mask,wb_old,p,pr,wx
@@ -472,7 +493,7 @@ def EtaCalc_warmest(classmap,classnum,kc_list,eto,sb_old,pr,wb_old,Sa,D,p,Fsnm,t
     Eta=np.where(Eta>etm,etm,Eta)
 
     # print('warmest',mask.dtype,eto.dtype,sb_old.dtype,pr.dtype,wb_old.dtype,p.dtype,tx.dtype,kc.dtype,snm.dtype,etm.dtype,Eta.dtype,wb.dtype,sb.dtype)
-    return [etm, Eta, wb, sb]
+    return [etm, Eta, wb, sb]#,snm]
 
 
 def EtaCalc(im_mask,Tx,islgp,Pr,Txsnm,Fsnm,Eto,wb_old,sb_old,istart0,istart1,Sa,D,p,kc_list,lgpt5,eta_class,doy_start,doy_end,parallel):
@@ -515,8 +536,9 @@ def EtaCalc(im_mask,Tx,islgp,Pr,Txsnm,Fsnm,Eto,wb_old,sb_old,istart0,istart1,Sa,
 
     ETM_list=[]  # list to hold 365 arrays (results for each day)
     ETA_list=[]  # list to hold 365 arrays (results for each day)
-    WB_list=[]   # list to hold 365 arrays (results for each day)
-    SB_list=[]   # list to hold 365 arrays (results for each day)
+    # WB_list=[]   # list to hold 365 arrays (results for each day)
+    # SB_list=[]   # list to hold 365 arrays (results for each day)
+    # snm_list=[]
     # times={}
     # compute_times=[]
     # agg_times=[]
@@ -551,19 +573,22 @@ def EtaCalc(im_mask,Tx,islgp,Pr,Txsnm,Fsnm,Eto,wb_old,sb_old,istart0,istart1,Sa,
             results_list=dask.compute(*task_list)
             # compute_times.append(timer()-start)
 
-            # aggregate results from the 5 different ETACalc routines for each variable
+            # aggregate results (spatially for this idoy) from the 5 different ETACalc routines for each variable
             # start=timer()
             arr_shape=results_list[0][0].shape
             ETM_agg=np.empty(arr_shape,dtype='float32')
             ETA_agg=np.empty(arr_shape,dtype='float32')
             WB_agg=np.empty(arr_shape,dtype='float32')
             SB_agg=np.empty(arr_shape,dtype='float32')
+            # snm_agg=np.empty(arr_shape,dtype='float32')
+            # ETM_agg[:],ETA_agg[:],WB_agg[:],SB_agg[:],snm_agg[:]=np.float32(np.nan),np.float32(np.nan),np.float32(np.nan),np.float32(np.nan),np.float32(np.nan)
             ETM_agg[:],ETA_agg[:],WB_agg[:],SB_agg[:]=np.float32(np.nan),np.float32(np.nan),np.float32(np.nan),np.float32(np.nan)
             for icat,results in enumerate(results_list):
                 ETM_agg=np.where(eta_class[:,:,idoy]==icat+1,results[0],ETM_agg)
                 ETA_agg=np.where(eta_class[:,:,idoy]==icat+1,results[1],ETA_agg)
                 WB_agg=np.where(eta_class[:,:,idoy]==icat+1,results[2],WB_agg)
                 SB_agg=np.where(eta_class[:,:,idoy]==icat+1,results[3],SB_agg)
+                # snm_agg=np.where(eta_class[:,:,idoy]==icat+1,results[4],snm_agg)
             # agg_times.append(timer()-start)            
 
         else:
@@ -598,12 +623,20 @@ def EtaCalc(im_mask,Tx,islgp,Pr,Txsnm,Fsnm,Eto,wb_old,sb_old,istart0,istart1,Sa,
         # collect the results for each day in a list
         ETM_list.append(ETM_agg)
         ETA_list.append(ETA_agg)
-        WB_list.append(WB_agg)
-        SB_list.append(SB_agg)
+        # WB_list.append(WB_agg)
+        # SB_list.append(SB_agg)
+        # snm_list.append(snm_agg)
 
         # update wb and sb values
         wb_old=WB_agg.copy()
         sb_old=SB_agg.copy()
+
+        if parallel:
+            del eta_class_d, Eto_d, sb_old_d, Pr_d, wb_old_d, p_d, Tx_d
+        
+        del vars1, vars2, vars3, vars4, vars5, task_list, results_list
+        del ETM_agg, ETA_agg, WB_agg, SB_agg#, snm_agg
+
     # task_time0=timer()-start0
 
     # times['chunk_size']=Tx.shape
@@ -612,13 +645,16 @@ def EtaCalc(im_mask,Tx,islgp,Pr,Txsnm,Fsnm,Eto,wb_old,sb_old,istart0,istart1,Sa,
     # times['avg daily agg'] = np.array(agg_times).mean()
     
     # clean up to release RAM
-    del im_mask,Tx,Pr,Txsnm,Fsnm,Eto,wb_old,sb_old,istart0,istart1,Sa,D,p,kc_list,lgpt5,eta_class
-    del vars1,vars2,vars3,vars4,vars5,results_list,ETM_agg,ETA_agg,WB_agg,SB_agg
-
+    del im_mask,Txsnm,Fsnm,Sa,D,kc_list
+    del lgpt5,eta_class,istart0,istart1
+    del Eto, sb_old, Pr, wb_old, p, Tx
     # create single array (all days together) for ETM, ETA
     # start=timer()
     ETM=np.stack(ETM_list,axis=-1,dtype='float32') # stack on last dim (time)
     ETA=np.stack(ETA_list,axis=-1,dtype='float32') # stack on last dim (time)
+    # WB=np.stack(WB_list,axis=-1,dtype='float32') # stack on last dim (time)
+    # SB=np.stack(SB_list,axis=-1,dtype='float32') # stack on last dim (time)
+    # SNM=np.stack(snm_list,axis=-1,dtype='float32') # stack on last dim (time)
     # print('ETM,ETA info',ETM.shape,ETM.dtype,ETA.shape,ETA.dtype)
     # task_time=timer()-start
     # times['stack']=task_time
@@ -670,6 +706,9 @@ def EtaCalc(im_mask,Tx,islgp,Pr,Txsnm,Fsnm,Eto,wb_old,sb_old,istart0,istart1,Sa,
     del lgp_whole   
     # print('lgp_tot',lgp_tot.dtype)
  
-    # print(times)   
-    return lgp_tot
+    # print(times) 
+    return lgp_tot  
+    # return ETM
+    # return yy[:,:,:doy_end]
+    # return islgp
 

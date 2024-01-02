@@ -36,7 +36,8 @@ class ClimateRegime(object):
         # option to take all lats as an input  
         # why not take in an array of all latitudes here instead of regenerating lats from min/max
         # could avoid slight shifts/precision problems with the grid         
-    def setLocationTerrainData(self, lat_min, lat_max, location, elevation): 
+    # def setLocationTerrainData(self, lat_min, lat_max, location, elevation): 
+    def setLocationTerrainData(self, lat_min, lat_max, location, elevation,lats,lons): 
         """Load geographical extents and elevation data in to the Class, 
            and create a latitude map
 
@@ -55,6 +56,8 @@ class ClimateRegime(object):
         self.im_width = elevation.shape[1]
         self.latitude = UtilitiesCalc.UtilitiesCalc(self.chunk2D,self.chunk3D).generateLatitudeMap(lat_min, lat_max, location, self.im_height, self.im_width)   
         # self.latitude = UtilitiesCalc.UtilitiesCalc().generateLatitudeMap(lats, location)  # option to take all lats as an input
+        self.lats=lats
+        self.lons=lons
         
     
     def setStudyAreaMask(self, admin_mask, no_data_value):
@@ -139,7 +142,7 @@ class ClimateRegime(object):
 
             short_rad=short_rad.rechunk(chunks=self.chunk3D) # chunk
             short_rad=da.where(short_rad < 0, 0, short_rad)  # elim negatives
-            short_rad = short_rad*0.0864#(3600.*24./1000000.)# convert units
+            short_rad = short_rad*3600.*24./1000000.#*0.0864## convert units
             srad_delay=short_rad.to_delayed().ravel()
 
             wind_speed=wind_speed.rechunk(chunks=self.chunk3D)     # chunk
@@ -180,7 +183,7 @@ class ClimateRegime(object):
         if self.parallel:
             ### CALCULATE MEANT_MONTHLY_SEALEVEL ###
             # (we only ever use monthly mean sea level so it's pointless to carry daily data in RAM)
-            meanT_daily_sealevel = self.meanT_daily + (da.broadcast_to(self.elevation[:,:,np.newaxis],(self.im_height,self.im_width,self.doy_end))/55)
+            meanT_daily_sealevel = self.meanT_daily + (da.broadcast_to(self.elevation[:,:,np.newaxis]/100*.55,(self.im_height,self.im_width,self.doy_end)))
             # print('in ClimateRegime, agg daily to meanT_monthly_sealevel in parallel')
             self.meanT_monthly_sealevel = obj_utilities.averageDailyToMonthly(meanT_daily_sealevel)   
             del meanT_daily_sealevel
@@ -229,7 +232,7 @@ class ClimateRegime(object):
 
         else:
             ### CALCULATE MEANT_MONTHLY_SEALEVEL ###
-            meanT_daily_sealevel = self.meanT_daily + np.expand_dims(self.elevation/55,axis=2)      
+            meanT_daily_sealevel = self.meanT_daily + np.expand_dims(self.elevation/100*.55,axis=2)      
             self.meanT_monthly_sealevel = obj_utilities.averageDailyToMonthly(meanT_daily_sealevel)   
             del meanT_daily_sealevel          
 
@@ -322,6 +325,7 @@ class ClimateRegime(object):
         winter_PET0=P_by_PET_monthly[:,:,JFMSON].sum(axis=2) # Oct-Mar   
         min_sealev_meanT=meanT_monthly_sealevel.min(axis=2)   
         Ta_diff=meanT_monthly_sealevel.max(axis=2) - meanT_monthly_sealevel.min(axis=2)   
+        # Ta_diff=meanT_monthly.max(axis=2) - meanT_monthly.min(axis=2)   
         meanT=meanT_monthly.mean(axis=2)   
         nmo_ge_10C=(meanT_monthly_sealevel >= 10).sum(axis=2)   
         
@@ -333,46 +337,34 @@ class ClimateRegime(object):
 
         # Tropics   
         # Tropical lowland   
-        thermal_climate=np.where((min_sealev_meanT>=18.) & (Ta_diff<15.) & (meanT>=20.),1,thermal_climate)   
+        thermal_climate=np.where((min_sealev_meanT>18.) & (Ta_diff<15.) & (meanT>=20.),1,thermal_climate)   
         # Tropical highland   
-        thermal_climate=np.where((min_sealev_meanT>=18.) & (Ta_diff<15.) & (meanT<20.) & (thermal_climate==0),2,thermal_climate)   
-        # thermal_climate=np.where((min_sealev_meanT>=18.) & (Ta_diff<15.) & (meanT<20.),2,thermal_climate)   
+        thermal_climate=np.where((min_sealev_meanT>18.) & (Ta_diff<15.) & (meanT<20.) & (thermal_climate==0),2,thermal_climate)   
         
         # SubTropic   
         # Subtropics Low Rainfall   
-        thermal_climate=np.where((min_sealev_meanT>=5.) & (nmo_ge_10C>=8) & (prsum<250) & (thermal_climate==0),3,thermal_climate)   
-        # thermal_climate=np.where((min_sealev_meanT>=5.) & (nmo_ge_10C>=8) & (prsum<250) ,3,thermal_climate)   
-        # Subtropics Summer Rainfall   
-        thermal_climate=np.where((min_sealev_meanT>=5.) & (nmo_ge_10C>=8) & (prsum>=250)& (latitude>=0) & (summer_PET0>=winter_PET0) & (thermal_climate==0),4,thermal_climate)   
-        thermal_climate=np.where((min_sealev_meanT>=5.) & (nmo_ge_10C>=8) & (prsum>=250)& (latitude<0) & (summer_PET0<winter_PET0) & (thermal_climate==0),4,thermal_climate)   
-        # thermal_climate=np.where((min_sealev_meanT>=5.) & (nmo_ge_10C>=8) & (prsum>=250) & (latitude>=0) & (summer_PET0>=winter_PET0),4,thermal_climate)   
-        # thermal_climate=np.where((min_sealev_meanT>=5.) & (nmo_ge_10C>=8) & (prsum>=250) & (latitude<0) & (summer_PET0<winter_PET0),4,thermal_climate)   
-        # Subtropics Winter Rainfall   
-        thermal_climate=np.where((min_sealev_meanT>=5.) & (nmo_ge_10C>=8) & (prsum>=250)& (latitude>=0) & (summer_PET0<winter_PET0) & (thermal_climate==0),5,thermal_climate)   
-        thermal_climate=np.where((min_sealev_meanT>=5.) & (nmo_ge_10C>=8) & (prsum>=250)& (latitude<0) & (summer_PET0>=winter_PET0) & (thermal_climate==0),5,thermal_climate)   
-        # thermal_climate=np.where((min_sealev_meanT>=5.) & (nmo_ge_10C>=8) & (prsum>=250)& (latitude>=0) & (summer_PET0<winter_PET0),5,thermal_climate)   
-        # thermal_climate=np.where((min_sealev_meanT>=5.) & (nmo_ge_10C>=8) & (prsum>=250)& (latitude<0) & (summer_PET0>=winter_PET0),5,thermal_climate)         
+        thermal_climate=np.where((min_sealev_meanT>5.) & (nmo_ge_10C>=8) & (prsum<250) & (thermal_climate==0),5,thermal_climate)   
+        # Subtropics Summer and Winter Rainfall   
+        thermal_climate=np.where((min_sealev_meanT>5.) & (nmo_ge_10C>=8) & (prsum>=250)& (latitude>=0) & (summer_PET0>=winter_PET0) & (thermal_climate==0),3,thermal_climate)   
+        thermal_climate=np.where((min_sealev_meanT>5.) & (nmo_ge_10C>=8) & (prsum>=250)& (latitude>=0) & (summer_PET0<winter_PET0) & (thermal_climate==0),4,thermal_climate)   
+
+        thermal_climate=np.where((min_sealev_meanT>5.) & (nmo_ge_10C>=8) & (prsum>=250)& (latitude<0) & (summer_PET0>=winter_PET0) & (thermal_climate==0),4,thermal_climate)   
+        thermal_climate=np.where((min_sealev_meanT>5.) & (nmo_ge_10C>=8) & (prsum>=250)& (latitude<0) & (summer_PET0<winter_PET0) & (thermal_climate==0),3,thermal_climate)   
         # Temperate   
         # Oceanic Temperate   
         thermal_climate=np.where((nmo_ge_10C>=4) & (Ta_diff<=20) & (thermal_climate==0),6,thermal_climate)   
-        # thermal_climate=np.where((nmo_ge_10C>=4) & (Ta_diff<=20),6,thermal_climate)   
         # Sub-Continental Temperate   
         thermal_climate=np.where((nmo_ge_10C>=4) & (Ta_diff<=35) & (thermal_climate==0),7,thermal_climate)   
-        # thermal_climate=np.where((nmo_ge_10C>=4) & (Ta_diff>20) & (Ta_diff<=35),7,thermal_climate)   
         # Continental Temperate   
         thermal_climate=np.where((nmo_ge_10C>=4) & (Ta_diff>35) & (thermal_climate==0),8,thermal_climate)   
-        # thermal_climate=np.where((nmo_ge_10C>=4) & (Ta_diff>35),8,thermal_climate)   
         
         # Boreal   
         # Oceanic Boreal   
         thermal_climate=np.where((nmo_ge_10C>=1) & (Ta_diff<=20) & (thermal_climate==0),9,thermal_climate)   
-        # thermal_climate=np.where((nmo_ge_10C>=1) & (nmo_ge_10C<4) & (Ta_diff<=20),9,thermal_climate)   
         # Sub-Continental Boreal   
         thermal_climate=np.where((nmo_ge_10C>=1) & (Ta_diff<=35) & (thermal_climate==0),10,thermal_climate)   
-        # thermal_climate=np.where((nmo_ge_10C>=1)&(nmo_ge_10C<4)&(Ta_diff>20)&(Ta_diff<=35),10,thermal_climate)   
         # Continental Boreal   
         thermal_climate=np.where((nmo_ge_10C>=1) & (Ta_diff>35) & (thermal_climate==0),11,thermal_climate)   
-        # thermal_climate=np.where((nmo_ge_10C>=1)&(nmo_ge_10C<4) & (Ta_diff>35),11,thermal_climate)   
         
         # Arctic   
         thermal_climate=np.where((thermal_climate==0),12,thermal_climate)   
@@ -719,6 +711,8 @@ class ClimateRegime(object):
             # build task graph for istart0,istart1,p
             lgpt5=da.from_array(self.lgpt5,chunks=bigchunk2D)
             istart0,istart1=LGPCalc.rainPeak(self.meanT_daily.rechunk(chunks=bigchunk3D),lgpt5)
+            # self.istart0=istart0
+            # self.istart1=istart1
             ng=da.zeros(self.pet_daily.shape,chunks=bigchunk3D,dtype='float32')
             pet=da.from_array(self.pet_daily,chunks=bigchunk3D)
 
@@ -734,7 +728,7 @@ class ClimateRegime(object):
             results=dask.compute(*task_list)
             eta_class=np.concatenate(results,axis=1)
             del lgpt5_3D,mask_3D,Tmean,Tmax,zipvars,task_list,results
-
+            # self.eta_class=eta_class[:,:,0]
             # build task graph for islgp
             islgp=da.where(self.meanT_daily>=5,np.int8(1),np.int8(0)).rechunk(chunks=bigchunk3D)   
 
@@ -766,18 +760,18 @@ class ClimateRegime(object):
             for i in range(nchunks):
                 if i%10 == 0: print('loop',(i+1),'of',nchunks,', this message prints every 10 chunks')
                 # convert input chunks to numpy arrays in memory
-                mask_np=mask_c.blocks[0,i].compute()
-                Tx365_np=Tx365_c.blocks[0,i,0].compute()
-                islgp_np=islgp_c.blocks[0,i,0].compute()
-                Pcp365_np=Pcp365_c.blocks[0,i,0].compute()
-                Pet365_np=Pet365_c.blocks[0,i,0].compute()
-                Wb_old_np=Wb_old_c.blocks[0,i].compute()
-                Sb_old_np=Sb_old_c.blocks[0,i].compute()
-                istart0_np=istart0_c.blocks[0,i].compute()
-                istart1_np=istart1_c.blocks[0,i].compute()
-                lgpt5_np=lgpt5_c.blocks[0,i].compute()
-                eta_class_np=eta_class_c.blocks[0,i].compute()
-                p_np=p_c.blocks[0,i,0].compute()
+                mask_np=mask_c.blocks[0,i].compute().copy()
+                Tx365_np=Tx365_c.blocks[0,i,0].compute().copy()
+                islgp_np=islgp_c.blocks[0,i,0].compute().copy()
+                Pcp365_np=Pcp365_c.blocks[0,i,0].compute().copy()
+                Pet365_np=Pet365_c.blocks[0,i,0].compute().copy()
+                Wb_old_np=Wb_old_c.blocks[0,i].compute().copy()
+                Sb_old_np=Sb_old_c.blocks[0,i].compute().copy()
+                istart0_np=istart0_c.blocks[0,i].compute().copy()
+                istart1_np=istart1_c.blocks[0,i].compute().copy()
+                lgpt5_np=lgpt5_c.blocks[0,i].compute().copy()
+                eta_class_np=eta_class_c.blocks[0,i].compute().copy()
+                p_np=p_c.blocks[0,i,0].compute().copy()
 
                 # compute lgp_tot in chunks
                 results.append(LGPCalc.EtaCalc(mask_np,Tx365_np,islgp_np,Pcp365_np,\
@@ -787,23 +781,71 @@ class ClimateRegime(object):
             # task_time=timer()-start
             # print('time spent in compute',task_time)  
 
-            del self.pet_daily # free up RAM
+            # del self.pet_daily # free up RAM
 
             # concatenate result chunks
             # start=timer()
             lgp_tot=np.concatenate(results,axis=1)
+
+            # ####################################################################
+            # ####### dont forget to delete this #################################
+            # ####### DEBUGGING LGPCalc.py, exporting different variables ########
+            # ####################################################################
+            # import pandas as pd
+            # import xarray as xr
+            # out_dir=r'C://Users/kerrie/Documents/01_LocalCode/repos/PyAEZ/pyaez2.1/pyaez2.1_parvec/debug/'
+            # varname='ETA'
+            # filename=varname+'_parvec21_LGPCalc.nc'
+            # year=1980            
+            # time=pd.date_range(str(year)+'-01-01',str(year)+'-12-31',freq='D')
+            # if len(time) != lgp_tot.shape[-1]:
+            #     time=time[~(time==str(year)+'-02-29')]
+
+            # # metadata for output data files
+            # timeattrs={'standard_name':'time','long_name':'time','axis':'T'}
+            # latattrs={'standard_name':'latitude','long_name':'latitude','units':'degrees_north','axis':'Y'}
+            # lonattrs={'standard_name':'longitude','long_name':'longitude','units':'degrees_east','axis':'X'}
+
+            # # encoding info for writing netcdf files
+            # time_encoding={'calendar':'standard','units':'days since 1900-01-01 00:00:00','_FillValue':None}
+            # lat_encoding={'_FillValue':None}
+            # lon_encoding={'_FillValue':None}
+            # var_encoding = {'zlib':True,'dtype':'float32'}
+
+            # var_xr=xr.DataArray(lgp_tot,
+            #         dims=['lat','lon','time'],
+            #         coords={'lat':('lat',y),'lon':('lon',x),'time':('time',time)}).astype('float32')
+            # var_xr.name=varname
+            # var_xr['lat'].attrs=latattrs
+            # var_xr['lon'].attrs=lonattrs
+            # var_xr.attrs={'description':'ETA from LGPCalc.py'}
+            # var_xr=var_xr.to_dataset()
+            # # write mask netcdf file
+            # var_xr.to_netcdf(out_dir+filename,
+            #             encoding={'lat':lat_encoding,'lon':lon_encoding,varname:var_encoding})  
+            # ####################################################################
+            # ####################################################################
+            # ####################################################################
+            # ####################################################################
+
+
+
             # task_time=timer()-start
             # print('time spent on lgp_tot concat',task_time)   
-
+            # return lgp_tot.astype('float32')  
+            # return eta_class
             if self.set_mask:
                 return np.where(self.im_mask.compute(), lgp_tot.astype('float32'), np.float32(np.nan))   
             else:
-                return lgp_tot.astype('float32')   
+                return lgp_tot.astype('float32')
+            # return lgp_tot.astype('float32')   
+            # self.ETA_check=lgp_tot
         else:
             try:
                 istart0,istart1=LGPCalc.rainPeak(self.meanT_daily,self.lgpt5)
                 ng=np.zeros(self.pet_daily.shape,dtype='float32')
                 p = LGPCalc.psh(ng,self.pet_daily)
+                self.p=p
 
                 # compute eta_class
                 lgpt5_3D=np.broadcast_to(self.lgpt5[:,:,np.newaxis].astype('float16'),(self.im_height,self.im_width,self.doy_end))
@@ -1096,15 +1138,22 @@ class ClimateRegime(object):
         aez_moisture_regime=np.where((lgpt_5>330)&(lgp>=60)&(lgp<180)&(aez_moisture_regime==0),2,aez_moisture_regime) # Class 2 (M2)
         aez_moisture_regime=np.where((lgpt_5>330)&(lgp>=0)&(lgp<60)&(aez_moisture_regime==0),1,aez_moisture_regime) # Class 1 (M1)
         aez_moisture_regime=np.where((lgpt_5<=330)&(lgp_equv>=270)&(aez_moisture_regime==0),4,aez_moisture_regime) # Class 4 (M4)
-        aez_moisture_regime=np.where((lgpt_5<=330)&(lgp_equv>=180)&(lgp<270)&(aez_moisture_regime==0),3,aez_moisture_regime) # Class 3 (M3)
-        aez_moisture_regime=np.where((lgpt_5<=330)&(lgp_equv>=60)&(lgp<180)&(aez_moisture_regime==0),2,aez_moisture_regime) # Class 2 (M2)
-        aez_moisture_regime=np.where((lgpt_5<=330)&(lgp_equv>=0)&(lgp<60)&(aez_moisture_regime==0),1,aez_moisture_regime) # Class 1 (M1)
+        aez_moisture_regime=np.where((lgpt_5<=330)&(lgp_equv>=180)&(lgp_equv<270)&(aez_moisture_regime==0),3,aez_moisture_regime) # Class 3 (M3)
+        aez_moisture_regime=np.where((lgpt_5<=330)&(lgp_equv>=60)&(lgp_equv<180)&(aez_moisture_regime==0),2,aez_moisture_regime) # Class 2 (M2)
+        aez_moisture_regime=np.where((lgpt_5<=330)&(lgp_equv>=0)&(lgp_equv<60)&(aez_moisture_regime==0),1,aez_moisture_regime) # Class 1 (M1)
 
 
         # Now, we will classify the agro-ecological zonation
         # By GAEZ v4 Documentation, there are prioritized sequential assignment of AEZ classes in order to ensure the consistency of classification
         if self.parallel:
             soil_terrain_lulc=soil_terrain_lulc.compute()
+
+        self.soil_terrain_lulc=soil_terrain_lulc
+        self.aez_moisture_regime=aez_moisture_regime
+        self.aez_temp_regime=aez_temp_regime
+        self.aez_tzone=aez_tzone
+        self.aez_tclimate=aez_tclimate
+
         aez = np.zeros((self.im_height, self.im_width), dtype='int8')
         aez=np.where((soil_terrain_lulc==8)&(aez==0),56,aez) # if it's urban built-up lulc, Dominantly urban/built-up land
         aez=np.where((soil_terrain_lulc==7)&(aez==0),57,aez) # if it's water/ dominantly water
@@ -1635,7 +1684,9 @@ class ClimateRegime(object):
         """    
         if self.parallel:
             import dask.array as da
-            interp_daily_da=da.from_array(self.interp_daily_temp,chunks=self.chunk3D)
+            interp_daily_np=UtilitiesCalc.UtilitiesCalc(self.chunk2D,self.chunk3D).smoothDailyTemp(self.doy_start-1,self.doy_end-1, self.im_mask, self.meanT_daily)
+            interp_daily_da=da.from_array(interp_daily_np,chunks=self.chunk3D)
+            # interp_daily_da=da.from_array(self.interp_daily_temp,chunks=self.chunk3D)
             interp_meanT_veg_T5=np.where(interp_daily_da>=5.,interp_daily_da,np.nan)   
             interp_meanT_veg_T10=np.where(interp_daily_da>=10.,interp_daily_da,np.nan)   
             ts_g_t5=np.nansum(interp_meanT_veg_T5,axis=2).compute()   
@@ -1674,21 +1725,21 @@ class ClimateRegime(object):
         """Multi cropping zonation for irrigated conditions"""
         multi_crop_irr=np.where((t_climate==1)&(lgp_t5>=360)&(lgp_t10>=360)&(ts_t0>=7200)&(ts_t10>=7000),8,multi_crop_irr)   
         multi_crop_irr=np.where((t_climate==1)&(lgp_t5>=300)&(lgp_t10>=240)&(ts_t0>=7200)&(ts_g_t5>=5100)&(ts_g_t10>=4800)&(multi_crop_irr==1),6,multi_crop_irr)   
-        multi_crop_irr=np.where((t_climate==1)&(lgp_t5>=270)&(lgp_t10>=165)&(ts_t0>=5500)&(ts_g_t5>=4000)&(ts_g_t10>=3200)&(multi_crop_rain==1),4,multi_crop_irr)   
-        multi_crop_irr=np.where((t_climate==1)&(lgp_t5>=240)&(lgp_t10>=165)&(ts_t0>=6400)&(ts_g_t5>=4000)&(ts_g_t10>=3200)&(multi_crop_rain==1),4,multi_crop_irr)   
-        multi_crop_irr=np.where((t_climate==1)&(lgp_t5>=240)&(lgp_t10>=165)&(ts_t0>=7200)&(ts_g_t5>=4000)&(ts_g_t10>=3200)&(multi_crop_rain==1),4,multi_crop_irr)   
-        multi_crop_irr=np.where((t_climate==1)&(lgp_t5>=220)&(lgp_t10>=120)&(ts_t0>=5500)&(ts_g_t5>=3200)&(ts_g_t10>=2700)&(multi_crop_rain==1),3,multi_crop_irr)   
-        multi_crop_irr=np.where((t_climate==1)&(lgp_t5>=200)&(lgp_t10>=120)&(ts_t0>=6400)&(ts_g_t5>=3200)&(ts_g_t10>=2700)&(multi_crop_rain==1),3,multi_crop_irr)   
-        multi_crop_irr=np.where((t_climate==1)&(lgp_t5>=200)&(lgp_t10>=120)&(ts_t0>=7200)&(ts_g_t5>=3200)&(ts_g_t10>=2700)&(multi_crop_rain==1),3,multi_crop_irr)   
-        multi_crop_irr=np.where((t_climate==1)&(lgp_t5>=120)&(lgp_t10>=90)&(ts_t0>=1600)&(ts_t10>=1200)&(multi_crop_rain==1),2,multi_crop_irr)   
+        multi_crop_irr=np.where((t_climate==1)&(lgp_t5>=270)&(lgp_t10>=165)&(ts_t0>=5500)&(ts_g_t5>=4000)&(ts_g_t10>=3200)&(multi_crop_irr==1),4,multi_crop_irr)   
+        multi_crop_irr=np.where((t_climate==1)&(lgp_t5>=240)&(lgp_t10>=165)&(ts_t0>=6400)&(ts_g_t5>=4000)&(ts_g_t10>=3200)&(multi_crop_irr==1),4,multi_crop_irr)   
+        multi_crop_irr=np.where((t_climate==1)&(lgp_t5>=240)&(lgp_t10>=165)&(ts_t0>=7200)&(ts_g_t5>=4000)&(ts_g_t10>=3200)&(multi_crop_irr==1),4,multi_crop_irr)   
+        multi_crop_irr=np.where((t_climate==1)&(lgp_t5>=220)&(lgp_t10>=120)&(ts_t0>=5500)&(ts_g_t5>=3200)&(ts_g_t10>=2700)&(multi_crop_irr==1),3,multi_crop_irr)   
+        multi_crop_irr=np.where((t_climate==1)&(lgp_t5>=200)&(lgp_t10>=120)&(ts_t0>=6400)&(ts_g_t5>=3200)&(ts_g_t10>=2700)&(multi_crop_irr==1),3,multi_crop_irr)   
+        multi_crop_irr=np.where((t_climate==1)&(lgp_t5>=200)&(lgp_t10>=120)&(ts_t0>=7200)&(ts_g_t5>=3200)&(ts_g_t10>=2700)&(multi_crop_irr==1),3,multi_crop_irr)   
+        multi_crop_irr=np.where((t_climate==1)&(lgp_t5>=120)&(lgp_t10>=90)&(ts_t0>=1600)&(ts_t10>=1200)&(multi_crop_irr==1),2,multi_crop_irr)   
 
-        multi_crop_irr=np.where((t_climate!=1)&(lgp_t5>=360)&(lgp_t10>=330)&(ts_t0>=7200)&(ts_t10>=7000)&(multi_crop_rain==1),8,multi_crop_irr)   
-        multi_crop_irr=np.where((t_climate!=1)&(lgp_t5>=330)&(lgp_t10>=270)&(ts_t0>=5700)&(ts_t10>=5500)&(multi_crop_rain==1),7,multi_crop_irr)   
-        multi_crop_irr=np.where((t_climate!=1)&(lgp_t5>=300)&(lgp_t10>=240)&(ts_t0>=5400)&(ts_t10>=5100)&(ts_g_t5>=5100)&(ts_g_t10>=4800)&(multi_crop_rain==1),6,multi_crop_irr)   
-        multi_crop_irr=np.where((t_climate!=1)&(lgp_t5>=270)&(lgp_t10>=180)&(ts_t0>=4800)&(ts_t10>=4500)&(ts_g_t5>=4300)&(ts_g_t10>=4000)&(multi_crop_rain==1),5,multi_crop_irr)   
-        multi_crop_irr=np.where((t_climate!=1)&(lgp_t5>=240)&(lgp_t10>=165)&(ts_t0>=4500)&(ts_t10>=3600)&(ts_g_t5>=4000)&(ts_g_t10>=3200)&(multi_crop_rain==1),4,multi_crop_irr)   
-        multi_crop_irr=np.where((t_climate!=1)&(lgp_t5>=200)&(lgp_t10>=120)&(ts_t0>=3600)&(ts_t10>=3000)&(ts_g_t5>=3200)&(ts_g_t10>=2700)&(multi_crop_rain==1),3,multi_crop_irr)   
-        multi_crop_irr=np.where((t_climate!=1)&(lgp_t5>=120)&(lgp_t10>=90)&(ts_t0>=1600)&(ts_t10>=1200)&(multi_crop_rain==1),2,multi_crop_irr)   
+        multi_crop_irr=np.where((t_climate!=1)&(lgp_t5>=360)&(lgp_t10>=330)&(ts_t0>=7200)&(ts_t10>=7000)&(multi_crop_irr==1),8,multi_crop_irr)   
+        multi_crop_irr=np.where((t_climate!=1)&(lgp_t5>=330)&(lgp_t10>=270)&(ts_t0>=5700)&(ts_t10>=5500)&(multi_crop_irr==1),7,multi_crop_irr)   
+        multi_crop_irr=np.where((t_climate!=1)&(lgp_t5>=300)&(lgp_t10>=240)&(ts_t0>=5400)&(ts_t10>=5100)&(ts_g_t5>=5100)&(ts_g_t10>=4800)&(multi_crop_irr==1),6,multi_crop_irr)   
+        multi_crop_irr=np.where((t_climate!=1)&(lgp_t5>=270)&(lgp_t10>=180)&(ts_t0>=4800)&(ts_t10>=4500)&(ts_g_t5>=4300)&(ts_g_t10>=4000)&(multi_crop_irr==1),5,multi_crop_irr)   
+        multi_crop_irr=np.where((t_climate!=1)&(lgp_t5>=240)&(lgp_t10>=165)&(ts_t0>=4500)&(ts_t10>=3600)&(ts_g_t5>=4000)&(ts_g_t10>=3200)&(multi_crop_irr==1),4,multi_crop_irr)   
+        multi_crop_irr=np.where((t_climate!=1)&(lgp_t5>=200)&(lgp_t10>=120)&(ts_t0>=3600)&(ts_t10>=3000)&(ts_g_t5>=3200)&(ts_g_t10>=2700)&(multi_crop_irr==1),3,multi_crop_irr)   
+        multi_crop_irr=np.where((t_climate!=1)&(lgp_t5>=120)&(lgp_t10>=90)&(ts_t0>=1600)&(ts_t10>=1200)&(multi_crop_irr==1),2,multi_crop_irr)   
 
         if self.set_mask:
             if self.parallel:
