@@ -4,6 +4,7 @@ ETOCalc.py calculates the reference evapotranspiration from
 the climatic data provided by the PyAEZ user.
 2020: N. Lakmal Deshapriya, Thaileng Thol
 2022/2023: Kittiphon Boonma  (Numba)
+2024: Kerrie Geil (vectorize and parallelize with dask)
 
 """
 import numpy as np
@@ -17,9 +18,19 @@ class ETOCalc(object):
         # this calculation has been reordered to decrease memory use
         """Calculate the reference evapotranspiration with Penmann-Monteith Equation
 
+        Args:
+            dstart (integer scalar): Julian start day, defaults to 1
+            dend (integer scalar): Julian end day, defaults to 365
+            lat (2D float array): latitude of every grid cell 
+            alt (2D float array): altitude of every grid cell
+            tmn (3D float array): daily surface minimum air temperature
+            tmx (3D float array): daily surface maximum air temperature
+            u2m (3D float array): daily surface wind speed
+            srad (3D float array): daily short wave radiation
+            rh (3D float array): daily surface relative humidity
+
         Returns:
-            ## float: ETo of a single pixel (function is called pixel-wise)
-            float: ETo of each pixel    
+            et0 (3D float array): reference evapotranspiration     
         """   
         nlats=tmn.shape[0]
         nlons=tmn.shape[1]
@@ -28,6 +39,8 @@ class ETOCalc(object):
 
         # calculate extraterrestrial radiation 
         #-------------------------------------
+        
+        # 3D latitude in radians
         latr = (lat * np.pi/180.).astype('float32')
         latr = np.broadcast_to(latr[:,:,np.newaxis],(nlats,nlons,ndays))
 
@@ -49,7 +62,7 @@ class ETOCalc(object):
         sdst = np.broadcast_to(sdst[np.newaxis, np.newaxis,:],(nlats,nlons,ndays))
         del dayoyr
 
-        # extraterrestrial radiation
+        # extraterrestrial radiation (ra)
         xx = (np.sin(sdcl) * np.sin(latr))
         yy = (np.cos(sdcl) * np.cos(latr))
         del sdcl,latr
@@ -61,7 +74,6 @@ class ETOCalc(object):
         del zz
 
         ra = np.round((37.586 * sdst * (omg*xx + np.sin(omg)*yy)).astype('float32'),1)
-        # print('omg,sdst,ra',omg.dtype,sdst.dtype,ra.dtype)
         del sdst, omg, xx, yy
 
         # Mean Saturation Vapor Pressure derived from air temperature
@@ -71,7 +83,6 @@ class ETOCalc(object):
         es = 0.5*(es_tmin + es_tmax)
         ea = rh * es  # Actual Vapor Pressure derived from relative humidity
         del rh
-        # print('es_tmin,es_tmax,es,ea',es_tmin.dtype,es_tmax.dtype,es.dtype,ea.dtype)
 
         # slope vapour pressure curve
         #-------------------------------------
@@ -80,7 +91,6 @@ class ETOCalc(object):
         dlmn = 4098. * es_tmin / (tmn + 237.3)**2
         del es_tmin
         dl = 0.5* (dlmx + dlmn)
-        # print('dlmx,dlmn,dl',dlmx.dtype,dlmn.dtype,dl.dtype)
         del dlmx,dlmn    
 
         # solar radiation Rs (0.25, 0.50 Angstrom coefficients)
@@ -88,7 +98,6 @@ class ETOCalc(object):
         # rs = (0.25 + (0.50 * (sd/dayhr))) * ra
         alt = np.broadcast_to(alt[:,:,np.newaxis],(nlats,nlons,ndays))
         rs0 = (0.75 + 0.00002 * alt) * ra
-        # print('alt,rs0',alt.dtype,rs0.dtype)
       
         # net longwave radiation Rnl
         #-------------------------------------
@@ -106,9 +115,9 @@ class ETOCalc(object):
         #-------------------------------------
         rns = 0.77 * srad
         del srad
-        # (g) net radiation Rn = Rns - Rnl
+        
+        # net radiation Rn = Rns - Rnl
         rn = rns - rnl
-        # print('rnl,rns,rn',rnl.dtype,rns.dtype,rn.dtype)
         del rns,rnl
 
         # soil heat flux [MJ/m2/day]
@@ -117,7 +126,6 @@ class ETOCalc(object):
         del tmn,tmx
         ta_diff=np.diff(tavg,n=1,axis=2,prepend=tavg[:,:,-1:])    
         G = 0.14 * ta_diff    
-        # print('tavg,ta_diff,G',tavg.dtype,ta_diff.dtype,G.dtype)
         del ta_diff
 
         #-------------------------------------        
@@ -129,7 +137,6 @@ class ETOCalc(object):
         del alt
 
         gam = 0.0016286 * ap/lam
-        # print('lam,ap,gam',lam.dtype,ap.dtype,gam.dtype)
         del ap
 
         hw = 200.
@@ -146,10 +153,8 @@ class ETOCalc(object):
         rhoc = Rl/(0.5*RLAI)  # crop canopy resistance
 
         gamst = gam * (1. + rhoc/rhoa)
-        # print('rhoa,gamst',rhoa.dtype,gamst.dtype)
         del rhoa
         #-------------------------------------
-
 
         # calculate aerodynamic and radiation terms of ET0
         #-------------------------------------
@@ -161,11 +166,8 @@ class ETOCalc(object):
 
         # calculate ET0
         et0 = et0ady + et0rad
-        # print('et0ady,et0rad,et0',et0ady.dtype,et0rad.dtype,et0.dtype)
         del et0ady,et0rad
 
         et0 = np.where(et0<0,0,et0)
-        # print('et0',et0.dtype)
 
         return et0.astype('float32')
-        # return latr.astype('float32')        

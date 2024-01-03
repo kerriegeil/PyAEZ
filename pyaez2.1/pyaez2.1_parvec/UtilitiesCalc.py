@@ -3,6 +3,8 @@ PyAEZ version 2.1.0 (June 2023)
 Additional calculations used throughout AEZ modules
 2020: N. Lakmal Deshapriya
 2022/2023: Swun Wunna Htet, K. Boonma
+2024: Kerrie Geil (vectorize and parallelize with dask)
+
 """
 
 import numpy as np

@@ -4,6 +4,7 @@ This ClimateRegime Class read/load and calculates the agro-climatic indicators
 required to run PyAEZ.  
 2021: N. Lakmal Deshapriya
 2022/2023: Swun Wunna Htet and Kittiphon Boonma
+2024: Kerrie Geil (vectorize and parallelize with dask)
 
 """
 
