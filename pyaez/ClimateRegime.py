@@ -56,8 +56,14 @@ class ClimateRegime(object):
         """
         if self.parallel:
             import dask
+            import dask.array as da
+            if np.nanmin(elevation)<=-999:
+                elevation=da.where(elevation<=-999,np.nan,elevation)
             self.elevation = elevation.rechunk(chunks=self.chunk2D) # convert to dask array
+            
         else:        
+            if np.nanmin(elevation)<=-999:
+                elevation=np.where(elevation<=-999,np.nan,elevation)            
             self.elevation = elevation
 
         self.im_height = elevation.shape[0]
