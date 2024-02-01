@@ -14,7 +14,7 @@ import sys
 
 # Initiate ClimateRegime Class instance
 class ClimateRegime(object):
-    def setParallel(self,var3D,parallel=False,nchunks=None,reduce_mem_used=False):
+    def setParallel(self,var3D,parallel=False,nchunks=None,reduce_mem_used=False,ram=0,threads=0):
         """Determine if user wants scripts to run in parallel (with dask) 
             and assign some additional parameters associated with 
             parallelization to the Class
@@ -32,7 +32,7 @@ class ClimateRegime(object):
         if parallel:
             # if parallel=True, we parallelize by only chunking the longitude dimension
             self.parallel=True
-            self.chunk2D,self.chunk3D,self.chunksize3D_MB,self.nchunks=UtilitiesCalc.UtilitiesCalc().setChunks(nchunks,var3D.shape,reduce_mem_used)    
+            self.chunk2D,self.chunk3D,self.chunksize3D_MB,self.nchunks=UtilitiesCalc.UtilitiesCalc().setChunks(nchunks,var3D.shape,reduce_mem_used,ram,threads)    
         else:
             # if parallel=False, we don't parallelize. Scripts will be run without using dask.
             self.parallel=False

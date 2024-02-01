@@ -35,7 +35,7 @@ class UtilitiesCalc(object):
         else:
             self.parallel=False
 
-    def setChunks(self,nchunks,shape,reduce_mem_used):
+    def setChunks(self,nchunks,shape,reduce_mem_used,ram,threads):
         """
         Computes an appropriate chunk size based on the user's 
         available computer resources (RAM and processing threads)
@@ -59,27 +59,34 @@ class UtilitiesCalc(object):
         nlons=shape[1]
         ntimes=shape[2]
 
+        func_scale_factor=20  # estimated based on RAM usage of setDailyClimateData (the biggest RAM hog)
+        dask_scale_factor=2  # dask likely stores at least two chunks per thread
+        buff=0#.25E9 # RAM buffer if needed in the future
+
+        # the following should eventually be scaled to a certain size of required RAM
+        # e.g. the multiplier (currently 2) should mean that RAM usage is kept under xGB
+        if reduce_mem_used: func_scale_factor=func_scale_factor*2        
+
         if nchunks:
             # user override for default nchunks
             nlons_chunk=int(np.ceil(nlons/nchunks)) # how many longitudes per chunk
         else:
-            # default nchunks based on system properties    
-            RAMinfo=psutil.virtual_memory() # returns info about system RAM in bytes
-            threads=psutil.cpu_count()  # returns system number of threads            
-            func_scale_factor=20  # estimated based on RAM usage of setDailyClimateData (the biggest RAM hog)
-            dask_scale_factor=2  # dask likely stores at least two chunks per thread
-
-            # the following should eventually be scaled to a certain size of required RAM
-            # e.g. the multiplier (currently 2) should mean that RAM usage is kept under xGB
-            if reduce_mem_used: func_scale_factor=func_scale_factor*2
-
-            buff=0#.25E9 # RAM buffer if needed in the future
-            RAMperthread = (RAMinfo.free-buff)/threads
-            chunklim=RAMperthread/func_scale_factor/dask_scale_factor
+            if (ram>0) and (threads>0):
+                ram=ram*1e9  # GB to bytes
+                RAMperthread=ram/threads
+            else:
+                # default nchunks based on system properties    
+                RAMinfo=psutil.virtual_memory() # returns info about system RAM in bytes
+                threads=psutil.cpu_count()  # returns system number of threads            
+                RAMperthread = (RAMinfo.free-buff)/threads
+            
+            chunklim=RAMperthread/func_scale_factor/dask_scale_factor # biggest chunk size in GB where computations won't fail
             npoints=chunklim/4
 
             # we chunk only by longitude, so npoints must contain all lats and all times
             nlons_chunk=int(np.floor(npoints/nlats/ntimes)) # number of longitudes per chunk 
+            if nlons_chunk<1:
+                sys.exit('This computer does not have enough RAM to run PyAEZ with the given inputs. Try using a model domain that is smaller in the latitude dimension.')
             nchunks=int(np.ceil(nlons/nlons_chunk))
 
             # making sure we have at least as many chunks as threads
