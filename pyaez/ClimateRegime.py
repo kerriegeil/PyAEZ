@@ -341,13 +341,13 @@ class ClimateRegime(object):
         
         # SubTropic   
         # Subtropics Low Rainfall   
-        thermal_climate=np.where((min_sealev_meanT>5.) & (nmo_ge_10C>=8) & (prsum<250) & (thermal_climate==0),5,thermal_climate)   
-        # Subtropics Summer and Winter Rainfall   
-        thermal_climate=np.where((min_sealev_meanT>5.) & (nmo_ge_10C>=8) & (prsum>=250)& (latitude>=0) & (summer_PET0>=winter_PET0) & (thermal_climate==0),3,thermal_climate)   
-        thermal_climate=np.where((min_sealev_meanT>5.) & (nmo_ge_10C>=8) & (prsum>=250)& (latitude>=0) & (summer_PET0<winter_PET0) & (thermal_climate==0),4,thermal_climate)   
-
-        thermal_climate=np.where((min_sealev_meanT>5.) & (nmo_ge_10C>=8) & (prsum>=250)& (latitude<0) & (summer_PET0>=winter_PET0) & (thermal_climate==0),4,thermal_climate)   
-        thermal_climate=np.where((min_sealev_meanT>5.) & (nmo_ge_10C>=8) & (prsum>=250)& (latitude<0) & (summer_PET0<winter_PET0) & (thermal_climate==0),3,thermal_climate)   
+        thermal_climate=np.where((min_sealev_meanT>5.) & (nmo_ge_10C>=8) & (prsum<250) & (thermal_climate==0),3,thermal_climate)   # was 5
+        # NH Subtropics Summer and Winter Rainfall   
+        thermal_climate=np.where((min_sealev_meanT>5.) & (nmo_ge_10C>=8) & (prsum>=250)& (latitude>=0) & (summer_PET0>=winter_PET0) & (thermal_climate==0),4,thermal_climate) # was 3  
+        thermal_climate=np.where((min_sealev_meanT>5.) & (nmo_ge_10C>=8) & (prsum>=250)& (latitude>=0) & (summer_PET0<winter_PET0) & (thermal_climate==0),5,thermal_climate)  # was 4 
+        # SH Subtropics Summer and Winter Rainfall
+        thermal_climate=np.where((min_sealev_meanT>5.) & (nmo_ge_10C>=8) & (prsum>=250)& (latitude<0) & (summer_PET0>=winter_PET0) & (thermal_climate==0),5,thermal_climate)  # was 4 
+        thermal_climate=np.where((min_sealev_meanT>5.) & (nmo_ge_10C>=8) & (prsum>=250)& (latitude<0) & (summer_PET0<winter_PET0) & (thermal_climate==0),4,thermal_climate)   # was 3
         
         # Temperate   
         # Oceanic Temperate   
